@@ -1,6 +1,7 @@
 # When we make a new one, we should inherit the Finetune class.
 import logging
 import numpy as np
+from collections import defaultdict
 from methods.cl_manager import CLManagerBase
 from utils.train_utils import DR_loss, Accuracy, DR_Reverse_loss
 import torch
@@ -52,6 +53,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         self.masks = {}
         self.residual_dict_index={}
         self.softmax = nn.Softmax(dim=0).to(self.device)
+        self.softmax2 = nn.Softmax(dim=1).to(self.device)
         self.use_feature_distillation = kwargs["use_feature_distillation"]
         
         if self.loss_criterion == "DR":
@@ -75,8 +77,8 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         self.optimizer = select_optimizer(self.opt_name, self.lr, self.model)
         self.scheduler = select_scheduler(self.sched_name, self.optimizer)
         self.etf_initialize()
-        self.residual_dict = {}
-        self.feature_dict = {}
+        self.residual_dict = defaultdict(list)
+        self.feature_dict = defaultdict(list)
         self.cls_feature_dict = {}
         self.current_cls_feature_dict_index = {}
         self.note = kwargs["note"]
@@ -284,27 +286,21 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                                 self.residual_dict_index[t.item()] = self.residual_dict_index[t.item()][1:]
                     else:
                         for idx, t in enumerate(y):
+                            self.residual_dict[t.item()].append(residual[idx])
+                            self.feature_dict[t.item()].append(feature.detach()[idx])                            
+                            '''
                             if t.item() not in self.residual_dict.keys():
                                 self.residual_dict[t.item()] = [residual[idx]]
                                 self.feature_dict[t.item()] = [feature.detach()[idx]]
                             else:  
                                 self.residual_dict[t.item()].append(residual[idx])
                                 self.feature_dict[t.item()].append(feature.detach()[idx])
-                                
+                            ''' 
+                            
                             if len(self.residual_dict[t.item()]) > self.residual_num:
                                 self.residual_dict[t.item()] = self.residual_dict[t.item()][1:]
                                 self.feature_dict[t.item()] = self.feature_dict[t.item()][1:]
                 
-                '''
-                if self.use_synthetic_regularization:
-                    #ood_dict, reg_loss = self.ood_inference()
-                    print("loss", loss, "reg_loss", reg_loss)
-                    if reg_loss is not None:
-                        loss += reg_loss
-                    if self.store_pickle and self.rnd_seed == 1 and self.sample_num % 100 == 0 and self.sample_num !=0 and self.ood_strategy!="none":
-                        ood_dict, _ = self.ood_inference(16)
-                        self.ood_store(ood_dict)
-                ''' 
 
             # accuracy calculation
             with torch.no_grad():
@@ -530,12 +526,14 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
 
                 with open(fc_pickle_name, 'wb') as f:
                     num_leanred_class = len(self.memory.cls_list)
+                    '''
                     index = []
                     for i in range(4):
                         #inf_index += list(range(i * real_num_class, i * real_num_class + real_entered_num_class))
                         index += list(range(i * self.real_num_classes + num_leanred_class, min((i+1) * self.real_num_classes, self.num_classes)))
                     pickle.dump(self.etf_vec[:, index].T, f, pickle.HIGHEST_PROTOCOL)
-                    #pickle.dump(self.etf_vec[:, :len(self.memory.cls_list)].T, f, pickle.HIGHEST_PROTOCOL)
+                    '''
+                    pickle.dump(self.etf_vec[:, :len(self.memory.cls_list)].T, f, pickle.HIGHEST_PROTOCOL)
 
                 with open(pickle_name_feature_std_mean_list, 'wb') as f:
                     pickle.dump(self.feature_std_mean_list, f, pickle.HIGHEST_PROTOCOL)
@@ -606,6 +604,8 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         # k-shot training temp_model using future data
         temp_model = copy.deepcopy(self.model)
         temp_model.train()
+        temp_optimizer = select_optimizer(self.opt_name, self.lr, temp_model)
+        
         for name, param in temp_model.named_parameters():
             if 'neck' not in name:
                 param.requires_grad = False
@@ -618,12 +618,11 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 x = data["image"].to(self.device)
                 y = data["label"].to(self.device)
                 
-                self.optimizer.zero_grad()
-
+                temp_optimizer.zero_grad()
                 # logit can not be used anymore
                 with torch.cuda.amp.autocast(self.use_amp):
                     target = self.etf_vec[:, y].t()
-                    _, feature = self.model(x, get_feature=True)
+                    _, feature = temp_model(x, get_feature=True)
                     feature = self.pre_logits(feature)
                     loss = self.criterion(feature, target)
                     residual = (target - feature).detach()
@@ -640,19 +639,21 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                             if len(future_residual_dict[t.item()]) > self.residual_num:
                                 future_residual_dict[t.item()] = future_residual_dict[t.item()][1:]
                                 future_feature_dict[t.item()] = future_feature_dict[t.item()][1:]
-                
+                            
                 if self.use_amp:
                     self.scaler.scale(loss).backward()
-                    self.scaler.step(self.optimizer)
+                    self.scaler.step(temp_optimizer)
                     self.scaler.update()
                 else:
                     loss.backward()
-                    self.optimizer.step()
+                    temp_optimizer.step()
 
+        '''
         # merge current (feature, residual) dict and future (feature, residual) dict
         for key in self.residual_dict.keys():
             future_residual_dict[key] = self.residual_dict[key]
             future_feature_dict[key] = self.feature_dict[key]
+        '''
 
         # pre-processing for residual 
         if self.use_residual:
@@ -704,8 +705,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             y = data["label"]
             x = x.to(self.device)
             y = y.to(self.device)
-            print("y")
-            print(y)
+
             logit, features = temp_model(x, get_feature=True)
             features = self.pre_logits(features)
 
@@ -747,7 +747,9 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             with torch.no_grad():
                 cls_score = features @ self.etf_vec
                 pred = torch.argmax(cls_score, dim=-1)
-                _, correct_count = self.compute_accuracy(cls_score[:, :len(self.memory.cls_list)], y)
+                #_, correct_count = self.compute_accuracy(cls_score[:, :len(self.memory.cls_list)], y)
+                
+                _, correct_count = self.compute_accuracy(cls_score[:, :len(self.memory.cls_list) + self.num_future_class], y)
                 total_correct += correct_count
 
                 total_loss += loss.item()
@@ -770,40 +772,21 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         total_correct, total_num_data, total_loss = 0.0, 0.0, 0.0
         correct_l = torch.zeros(self.n_classes).to(self.device)
         num_data_l = torch.zeros(self.n_classes).to(self.device)
-        total_acc = 0.0
-        label = []
-        feature_dict = {}
         self.model.eval()
 
         if self.use_residual:
-            residual_list = []
-            feature_list = []
-            key_list = []
-            for key in self.residual_dict.keys():
-                residual_list.extend(self.residual_dict[key])
-                feature_list.extend(self.feature_dict[key])
-                key_list.extend([int(key) for _ in range(len(self.feature_dict[key]))])
-                print("residual", key, len(self.residual_dict[key]))
-            residual_list = torch.stack(residual_list)
-            feature_list = torch.stack(feature_list)
-            key_list = torch.Tensor(key_list).to(self.device)
+            residual_list = torch.stack(list(self.residual_dict.values())[0])
+            feature_list = torch.stack(list(self.feature_dict.values())[0])
 
             # residual dict 내의 feature들이 어느정도 잘 모여있는 상태여야 residual term good
-            nc1_feature_dict = {}
-            mu_G = 0
-            num_feature = 0
-            mean_vec_list = {}
-            mean_vec_tensor_list = []
+            nc1_feature_dict = defaultdict(list)
+            mean_vec_list = defaultdict(list)
             for cls in list(self.feature_dict.keys()):
-                nc1_feature_dict[cls] = torch.stack(self.feature_dict[cls]).detach()
-                nc1_feature_dict[cls] /= torch.norm(torch.stack(self.feature_dict[cls], dim=0), p=2, dim=1, keepdim=True)
-                mean_vec_list[cls] = torch.mean(torch.stack(self.feature_dict[cls]), dim=0)
-                mean_vec_tensor_list.append(mean_vec_list[cls])
-                mu_G += torch.sum(nc1_feature_dict[cls], dim=0)
-                num_feature += len(self.feature_dict[cls])
-            
-            mu_G /= num_feature
-            mean_vec_tensor_list = torch.stack(mean_vec_tensor_list)       
+                stacked_feature_dict = torch.stack(self.feature_dict[cls]).detach()
+                nc1_feature_dict[cls] = stacked_feature_dict / torch.norm(stacked_feature_dict, p=2, dim=1, keepdim=True)
+                mean_vec_list[cls] = torch.mean(stacked_feature_dict, dim=0)
+                
+            mu_G = torch.mean(torch.stack(list(self.feature_dict.values())[0]), dim=0)
             whole_cov_value = self.get_within_whole_class_covariance(mu_G, feature_list)
             
             if self.residual_strategy == "within":
@@ -828,44 +811,39 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 features = self.pre_logits(features)
 
                 if self.use_residual:
-
                     # |z-z(i)|**2
                     # print("-torch.norm(feature - feature_list, p=2, dim=1, keepdim=True)", torch.norm(features[0] - feature_list, p=2, dim=1, keepdim=True).shape)
-                    w_i_lists = [-torch.norm(feature - feature_list, p=2, dim=1, keepdim=True) for feature in features.detach()]
+                    #w_i_lists = [-torch.norm(feature - feature_list, p=2, dim=1, keepdim=True) for feature in features.detach()]
+                    #print("w_i_lists", len(w_i_lists), w_i_lists[0].shape)
+                    w_i_lists = -torch.norm(features.view(-1, 1, features.shape[1]) - feature_list, p=2, dim=2)
 
                     # top_k w_i index select
-                    w_i_indexs = [torch.topk(w_i_list.squeeze(), self.knn_top_k)[1].long() for w_i_list in w_i_lists]
+                    # w_i_indexs = [torch.topk(w_i_list, self.knn_top_k)[1].long() for w_i_list in w_i_lists]
+                    # print(len(w_i_indexs), w_i_indexs.shape)
+                    w_i_indexs = torch.topk(w_i_lists, self.knn_top_k)[1].long()
                     
-                    # modified_knn
-                    if self.use_modified_knn:
-                        w_i_new_indexs = []
-                        for w_i in w_i_indexs:
-                            unique = torch.unique(key_list[w_i], return_counts=True)
-                            index = (key_list[w_i] == unique[0][torch.argmax(unique[1]).item()].item()).nonzero(as_tuple=True)[0]
-                            w_i_new_indexs.append(w_i[index])
-                        w_i_indexs = w_i_new_indexs
-                        
                     # top_k w_i 
                     if self.select_criterion == "softmax":
-                        #w_i_lists = [self.softmax(torch.topk(w_i_list.squeeze(), self.knn_top_k)[0] / self.knn_sigma) for w_i_list in w_i_lists]
-                        w_i_lists = [self.softmax(w_i_list.squeeze()[w_i_index] / self.knn_sigma) for w_i_index, w_i_list in zip(w_i_indexs, w_i_lists)]
+                        #w_i_lists2 = [self.softmax(w_i_list.squeeze()[w_i_index] / self.knn_sigma) for w_i_index, w_i_list in zip(w_i_indexs, w_i_lists)]
+                        #print(w_i_lists2[0])
+                        
+                        # mesh grid는 격자점을 생성해준다. (0,0), (0,1) ...
+                        idx1, _ = torch.meshgrid(torch.arange(w_i_indexs.shape[0]), torch.arange(w_i_indexs.shape[1]))
+                        w_i_lists = self.softmax2(w_i_lists[idx1, w_i_indexs] / self.knn_sigma)
+                        #w_i_lists = [self.softmax(w_i_list.squeeze()[w_i_index] / self.knn_sigma) for w_i_index, w_i_list in zip(w_i_indexs, w_i_lists)]
+                        #print("!w_i_lists2", len(w_i_lists2), w_i_lists2[0].shape) # !w_i_lists2 512 torch.Size([21])
+                        #print(torch.index_select(w_i_lists, 0, w_i_indexs).shape)
+                        #w_i_lists = self.softmax(w_i_lists[w_i_indexs] / self.knn_sigma)
+                        #print("!w_i_lists", w_i_lists.shape)
+                        
                     elif self.select_criterion == "linear": # just weight sum
                         w_i_lists = [torch.topk(w_i_list.squeeze(), self.knn_top_k)[0] / torch.sum(torch.topk(w_i_list.squeeze(), self.knn_top_k)[0]).item() for w_i_list in w_i_lists]
 
                     # select top_k residuals
+                    #residual_lists = residual_list.repeat(1, 512, 1)[:, idx1, w_i_indexs]
                     residual_lists = [residual_list[w_i_index] for w_i_index in w_i_indexs]
                     residual_terms = [rs_list.T @ w_i_list  for rs_list, w_i_list in zip(residual_lists, w_i_lists)]
-
-                    '''
-                    unique_y = torch.unique(y).tolist()
-                    for u_y in unique_y:
-                        indices = (y == u_y).nonzero(as_tuple=True)[0]
-                        if u_y not in feature_dict.keys():
-                            feature_dict[u_y] = [torch.index_select(features, 0, indices)]
-                        else:
-                            feature_dict[u_y].append(torch.index_select(features, 0, indices))
-                    '''
-
+                    print("res_term", len(residual_terms), residual_terms[0].shape)
 
                 if self.use_residual:
                     if self.use_residual_unique:

@@ -734,12 +734,13 @@ class ETF_ER_RESMEM_VER6(CLManagerBase):
 
                 with open(fc_pickle_name, 'wb') as f:
                     num_leanred_class = len(self.memory.cls_list)
+                    '''
                     index = []
                     for i in range(4):
-                        #inf_index += list(range(i * real_num_class, i * real_num_class + real_entered_num_class))
                         index += list(range(i * self.real_num_classes + num_leanred_class, min((i+1) * self.real_num_classes, self.num_classes)))
                     pickle.dump(self.etf_vec[:, index].T, f, pickle.HIGHEST_PROTOCOL)
-                    #pickle.dump(self.etf_vec[:, :len(self.memory.cls_list)].T, f, pickle.HIGHEST_PROTOCOL)
+                    '''
+                    pickle.dump(self.etf_vec[:, :len(self.memory.cls_list)].T, f, pickle.HIGHEST_PROTOCOL)
 
                 with open(pickle_name_feature_std_mean_list, 'wb') as f:
                     pickle.dump(self.feature_std_mean_list, f, pickle.HIGHEST_PROTOCOL)

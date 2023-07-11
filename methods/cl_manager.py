@@ -441,10 +441,10 @@ class CLManagerBase:
         logger.info(
             f"Future Test | Sample # {sample_num} | test_acc {avg_acc:.4f} | TFLOPs {self.total_flops/1000:.2f}"
         )
-        for idx in range(self.num_learned_class):
-            acc = cls_acc[idx]
+        for idx in range(self.num_future_class):
+            acc = cls_acc[self.num_learned_class + idx]
             logger.info(
-                f"Class_Acc | Sample # {sample_num} | cls{idx} {acc:.4f}"
+                f"Class_Acc | Sample # {sample_num} | cls{self.num_learned_class + idx} {acc:.4f}"
             )
 
     def update_schedule(self, reset=False):
@@ -474,10 +474,13 @@ class CLManagerBase:
                 batch_size=batch_size,
                 num_workers=n_worker,
             )
-            '''
+            eval_dict = self.evaluation(self.test_loader, self.criterion)
+            self.report_test(sample_num, eval_dict["avg_loss"], eval_dict["avg_acc"], eval_dict["cls_acc"])
+            
             if len(cls_order) - len(self.exposed_classes) <= self.num_future_class:
                 self.future_train_loader = None
                 self.future_test_loader = None
+                
             else:
                 future_test_cls = cls_order[len(self.exposed_classes) : len(self.exposed_classes) + self.num_future_class]
                 ### make future_train_loader ###
@@ -507,7 +510,7 @@ class CLManagerBase:
                     exp_future_test_df,
                     dataset=self.dataset,
                     transform=self.test_transform,
-                    cls_list=future_test_cls,
+                    cls_list=self.exposed_classes + future_test_cls,
                     data_dir=self.data_dir
                 )
                 self.future_test_loader = DataLoader(
@@ -516,11 +519,9 @@ class CLManagerBase:
                     batch_size=batch_size,
                     num_workers=n_worker,
                 )
-            '''
-        eval_dict = self.evaluation(self.test_loader, self.criterion)
-        self.report_test(sample_num, eval_dict["avg_loss"], eval_dict["avg_acc"], eval_dict["cls_acc"])
-        #future_eval_dict = self.future_evaluation()
-        #self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])
+
+                future_eval_dict = self.future_evaluation()
+                self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])
         
         self.added = False
         return eval_dict
@@ -954,7 +955,7 @@ class MemoryBase:
 
                 # logit can not be used anymore
                 with torch.cuda.amp.autocast(self.use_amp):
-                    logit, feature = self.model(x, get_feature=True)
+                    logit, feature = temp_model(x, get_feature=True)
                     loss = self.criterion(logit, y)
                 
                 if self.use_amp:
