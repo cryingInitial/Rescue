@@ -34,7 +34,8 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         self.current_feature_num = kwargs["current_feature_num"]
         self.residual_num = kwargs["residual_num"]
         self.residual_strategy = kwargs["residual_strategy"]
-
+        self.future_train_loader = None
+        self.future_test_loader = None
         self.stds_list = []
         self.masks = {}
         self.residual_dict_index={}

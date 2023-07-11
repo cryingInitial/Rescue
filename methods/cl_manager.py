@@ -70,7 +70,7 @@ class CLManagerBase:
         self.f_period = kwargs["f_period"]
         self.use_amp = kwargs["use_amp"]
         self.future_training_iterations = kwargs["future_training_iterations"]
-        self.use_feature_eval = kwargs["use_feature_eval"]
+        self.use_future_eval = kwargs["use_future_eval"]
         if self.use_amp:
             self.scaler = torch.cuda.amp.GradScaler()
 
@@ -469,7 +469,7 @@ class CLManagerBase:
                 num_workers=n_worker,
             )
             
-            if self.use_feature_eval:
+            if self.use_future_eval:
                 if len(cls_order) - len(self.exposed_classes) <= self.num_future_class:
                     self.future_train_loader = None
                     self.future_test_loader = None
@@ -516,7 +516,7 @@ class CLManagerBase:
               
         eval_dict = self.evaluation(self.test_loader, self.criterion)
         self.report_test(sample_num, eval_dict["avg_loss"], eval_dict["avg_acc"], eval_dict["cls_acc"])
-        if self.future_train_loader is not None and self.use_feature_eval:
+        if self.future_train_loader is not None and self.use_future_eval:
             future_eval_dict = self.future_evaluation()
             self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])        
         self.added = False
