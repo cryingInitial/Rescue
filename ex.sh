@@ -1,10 +1,7 @@
 #/bin/bash
 
 # CIL CONFIG
-NOTE="etf_er_resmem_ver3_cifar10_sigma10_iter1_use_residual_wo_knn_temp_0.9_k21"
-#"etf_er_resmem_ver7_moco_cifar10_sigma10_iter1_moco_coeff_0.01"
-#"etf_er_resmem_ver3_sigma10_cifar10_non_distill_non_residual_w_neck"
-#"etf_er_resmem_not_pre_trained_sigma0_cifar10_iter_1_loss_dr_temp1_knn_sigma0.7_softmax_top_k3_residual_num20" # Short description of the experiment. (WARNING: logs/results with the same note will be overwritten!)
+NOTE="etf_er_resmem_ver3_cifar10_sigma10_iter1_future_eval"
 MODE="etf_er_resmem_ver3"
 K_COEFF="4"
 TEMPERATURE="0.125"
@@ -14,7 +11,6 @@ N_WORKER=1
 FUTURE_STEPS=1
 EVAL_N_WORKER=2
 EVAL_BATCH_SIZE=1000
-#USE_KORNIA="--use_kornia"
 USE_KORNIA=""
 UNFREEZE_RATE=0.25
 SEEDS="1"
@@ -24,8 +20,6 @@ LOSS_CRITERION="DR"
 SOFTMAX_TEMPERATURE=1.0
 KNN_SIGMA=0.9
 RESIDUAL_NUM=50
-RESIDUAL_NUM_THRESHOLD=10
-CURRENT_FEATURE_NUM=50
 DATASET="cifar10" # cifar10, cifar100, tinyimagenet, imagenet
 ONLINE_ITER=1
 SIGMA=10
@@ -34,16 +28,10 @@ INIT_CLS=100
 USE_AMP="--use_amp"
 NUM_EVAL_CLASS=10
 NUM_CLASS=10
-DISTILL_COEFF=0.99
-DISTILL_BETA=0.5
-DISTILL_THRESHOLD=0.5
-DISTILL_STRATEGY="classwise_difference" # naive, classwise, classwise_difference 
-RESIDUAL_STRATEGY="none" # prob, none
-OOD_STRATEGY="none" # cutmix, rotate, none
-OOD_NUM_SAMPLES=16
+RESIDUAL_STRATEGY="within" # prob, none
 SCL_COEFF=0.01
 MOCO_COEFF=0.01
-NUM_K_SHOT=10
+NUM_K_SHOT=20
 FUTURE_TRAINING_ITERATIONS=10
 
 #TRANSFORMS=['randaug', 'cutmix']
@@ -51,10 +39,6 @@ FUTURE_TRAINING_ITERATIONS=10
 # Neck Layer Including
 #USE_NECK_FORWARD=""
 USE_NECK_FORWARD="--use_neck_forward"
-
-### DISTILLATION ###
-#USE_FEATURE_DISTILLATION="--use_feature_distillation"
-USE_FEATURE_DISTILLATION=""
 
 ### STORING PICKLE ###
 STORE_PICKLE="--store_pickle"
@@ -64,21 +48,8 @@ STORE_PICKLE="--store_pickle"
 USE_RESIDUAL="--use_residual"
 #USE_RESIDUAL=""
 
-#RESIDUAL_WARM_UP="--use_residual_warmup"
-RESIDUAL_WARM_UP=""
-
-#RESIDUAL_UNIQUE="--use_residual_unique"
-RESIDUAL_UNIQUE=""
-
-#MODIFIED_KNN="--use_modified_knn"
-MODIFIED_KNN=""
-
-#PATCH_PERMUATION="--use_patch_permutation"
-PATCH_PERMUATION=""
-
-#REGULARIZATION="--use_synthetic_regularization"
-REGULARIZATION=""
-
+#USE_FEATURE_EVAL="--use_future_eval"
+USE_FEATURE_EVAL=""
 
 if [ "$DATASET" == "cifar10" ]; then
     MEM_SIZE=500 NUM_FUTURE_CLASS=2
@@ -115,12 +86,12 @@ fi
 
 for RND_SEED in $SEEDS
 do
-    CUDA_VISIBLE_DEVICES=0 nohup python main_new.py --mode $MODE --residual_strategy $RESIDUAL_STRATEGY $RESIDUAL_UNIQUE $USE_NECK_FORWARD --moco_coeff $MOCO_COEFF \
-    --dataset $DATASET --unfreeze_rate $UNFREEZE_RATE $USE_KORNIA --k_coeff $K_COEFF --temperature $TEMPERATURE --ood_strategy $OOD_STRATEGY --scl_coeff $SCL_COEFF --future_training_iterations $FUTURE_TRAINING_ITERATIONS \
-    --sigma $SIGMA --repeat $REPEAT --init_cls $INIT_CLS --samples_per_task 20000 --residual_num $RESIDUAL_NUM $RESIDUAL_WARM_UP $MODIFIED_KNN --ood_num_samples $OOD_NUM_SAMPLES \
-    --rnd_seed $RND_SEED --val_memory_size $VAL_SIZE --num_eval_class $NUM_EVAL_CLASS --num_class $NUM_CLASS --residual_num_threshold $RESIDUAL_NUM_THRESHOLD --num_k_shot $NUM_K_SHOT \
-    --model_name $MODEL_NAME --opt_name $OPT_NAME --sched_name $SCHED_NAME --softmax_temperature $SOFTMAX_TEMPERATURE $PATCH_PERMUATION $REGULARIZATION --num_future_class $NUM_FUTURE_CLASS \
-    --lr $LR --batchsize $BATCHSIZE --mir_cands $MIR_CANDS $STORE_PICKLE --knn_top_k $KNN_TOP_K --select_criterion $SELECT_CRITERION $USE_RESIDUAL $USE_FEATURE_DISTILLATION \
-    --memory_size $MEM_SIZE $TRANSFORM_ON_GPU --online_iter $ONLINE_ITER --knn_sigma $KNN_SIGMA --distill_coeff $DISTILL_COEFF --distill_beta $DISTILL_BETA --distill_threshold $DISTILL_THRESHOLD --distill_strategy $DISTILL_STRATEGY --current_feature_num $CURRENT_FEATURE_NUM \
-    --note $NOTE --eval_period $EVAL_PERIOD --imp_update_period $IMP_UPDATE_PERIOD $USE_AMP --n_worker $N_WORKER --future_steps $FUTURE_STEPS --eval_n_worker $EVAL_N_WORKER --eval_batch_size $EVAL_BATCH_SIZE &
+    CUDA_VISIBLE_DEVICES=0 nohup python main_new.py --mode $MODE --residual_strategy $RESIDUAL_STRATEGY $USE_NECK_FORWARD --moco_coeff $MOCO_COEFF \
+    --dataset $DATASET --unfreeze_rate $UNFREEZE_RATE $USE_KORNIA --k_coeff $K_COEFF --temperature $TEMPERATURE --scl_coeff $SCL_COEFF --future_training_iterations $FUTURE_TRAINING_ITERATIONS \
+    --sigma $SIGMA --repeat $REPEAT --init_cls $INIT_CLS --samples_per_task 20000 --residual_num $RESIDUAL_NUM --use_feature_eval $USE_FEATURE_EVAL \
+    --rnd_seed $RND_SEED --val_memory_size $VAL_SIZE --num_eval_class $NUM_EVAL_CLASS --num_class $NUM_CLASS --num_k_shot $NUM_K_SHOT \
+    --model_name $MODEL_NAME --opt_name $OPT_NAME --sched_name $SCHED_NAME --softmax_temperature $SOFTMAX_TEMPERATURE --num_future_class $NUM_FUTURE_CLASS \
+    --lr $LR --batchsize $BATCHSIZE --mir_cands $MIR_CANDS $STORE_PICKLE --knn_top_k $KNN_TOP_K --select_criterion $SELECT_CRITERION $USE_RESIDUAL \
+    --memory_size $MEM_SIZE $TRANSFORM_ON_GPU --online_iter $ONLINE_ITER --knn_sigma $KNN_SIGMA --note $NOTE --eval_period $EVAL_PERIOD --imp_update_period \
+    $IMP_UPDATE_PERIOD $USE_AMP --n_worker $N_WORKER --future_steps $FUTURE_STEPS --eval_n_worker $EVAL_N_WORKER --eval_batch_size $EVAL_BATCH_SIZE &
 done

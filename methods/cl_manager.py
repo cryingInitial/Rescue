@@ -65,13 +65,12 @@ class CLManagerBase:
         self.transform_on_gpu = kwargs["transform_on_gpu"]
         self.use_kornia = kwargs["use_kornia"]
         self.transform_on_worker = kwargs["transform_on_worker"]
-        self.use_synthetic_regularization = kwargs["use_synthetic_regularization"]
         self.eval_period = kwargs["eval_period"]
         self.topk = kwargs["topk"]
         self.f_period = kwargs["f_period"]
-        self.ood_strategy = kwargs["ood_strategy"]
         self.use_amp = kwargs["use_amp"]
         self.future_training_iterations = kwargs["future_training_iterations"]
+        self.use_feature_eval = kwargs["use_feature_eval"]
         if self.use_amp:
             self.scaler = torch.cuda.amp.GradScaler()
 
@@ -93,7 +92,7 @@ class CLManagerBase:
         self.data_stream = iter(self.train_datalist)
         self.dataloader = MultiProcessLoader(self.n_worker, self.cls_dict, self.train_transform, self.data_dir, self.transform_on_gpu, self.cpu_transform, self.device, self.use_kornia, self.transform_on_worker)
         self.memory_dataloader = MultiProcessLoader(self.n_worker, self.cls_dict, self.train_transform, self.data_dir, self.transform_on_gpu, self.cpu_transform, self.device, self.use_kornia, self.transform_on_worker)
-        self.memory = MemoryBase(self.memory_size, self.device, self.ood_strategy)
+        self.memory = MemoryBase(self.memory_size, self.device)
         self.memory_list = []
         self.temp_batch = []
         self.temp_future_batch = []
@@ -301,11 +300,6 @@ class CLManagerBase:
                 _, feature = self.model(x[i * batchsize:min((i + 1) * batchsize, len(x))], get_feature=True)
                 features.append(feature)
             
-            if self.ood_strategy != "none" and self.use_synthetic_regularization:
-                for i in range(len(new_x) // batchsize + 1):
-                    _, feature = self.model(new_x[i * batchsize:min((i + 1) * batchsize, len(new_x))], get_feature=True)
-                    features.append(feature)
-                y = torch.cat([y, new_y])
             #self.model(torch.cat(x[i * batchsize:min((i + 1) * batchsize, len(x))]).to(self.device)) for i in range(512 // batchsize))], dim=0) 
             #_, features = self.model(x, get_feature=True)
             features = torch.cat(features,dim=0)
@@ -475,54 +469,54 @@ class CLManagerBase:
                 num_workers=n_worker,
             )
             
-            
-            if len(cls_order) - len(self.exposed_classes) <= self.num_future_class:
-                self.future_train_loader = None
-                self.future_test_loader = None
-                
-            else:
-                future_test_cls = cls_order[len(self.exposed_classes) : len(self.exposed_classes) + self.num_future_class]
-                ### make future_train_loader ###
-                future_train_list = []
-                for test_cls in future_test_cls:
-                    future_train_list.extend(future_train_dict[test_cls])
-                
-                future_train_dataset = ImageDataset(
-                    pd.DataFrame(future_train_list),
-                    dataset=self.dataset,
-                    transform=self.future_train_transform,
-                    cls_list=self.exposed_classes+future_test_cls,
-                    data_dir=self.data_dir
-                )
-                self.future_train_loader = DataLoader(
-                    future_train_dataset,
-                    shuffle=True,
-                    batch_size=batch_size,
-                    num_workers=n_worker,
-                )
-                
-                ### make future_test_loader ###
-                future_test_df = pd.DataFrame(test_list)
-                exp_future_test_df = future_test_df[future_test_df['klass'].isin(future_test_cls)]
-                print("exp_future_test_df", len(exp_future_test_df))
-                future_test_dataset = ImageDataset(
-                    exp_future_test_df,
-                    dataset=self.dataset,
-                    transform=self.test_transform,
-                    cls_list=self.exposed_classes + future_test_cls,
-                    data_dir=self.data_dir
-                )
-                self.future_test_loader = DataLoader(
-                    future_test_dataset,
-                    shuffle=True,
-                    batch_size=batch_size,
-                    num_workers=n_worker,
-                )
+            if self.use_feature_eval:
+                if len(cls_order) - len(self.exposed_classes) <= self.num_future_class:
+                    self.future_train_loader = None
+                    self.future_test_loader = None
+                    
+                else:
+                    future_test_cls = cls_order[len(self.exposed_classes) : len(self.exposed_classes) + self.num_future_class]
+                    ### make future_train_loader ###
+                    future_train_list = []
+                    for test_cls in future_test_cls:
+                        future_train_list.extend(future_train_dict[test_cls])
+                    
+                    future_train_dataset = ImageDataset(
+                        pd.DataFrame(future_train_list),
+                        dataset=self.dataset,
+                        transform=self.future_train_transform,
+                        cls_list=self.exposed_classes+future_test_cls,
+                        data_dir=self.data_dir
+                    )
+                    self.future_train_loader = DataLoader(
+                        future_train_dataset,
+                        shuffle=True,
+                        batch_size=batch_size,
+                        num_workers=n_worker,
+                    )
+                    
+                    ### make future_test_loader ###
+                    future_test_df = pd.DataFrame(test_list)
+                    exp_future_test_df = future_test_df[future_test_df['klass'].isin(future_test_cls)]
+                    print("exp_future_test_df", len(exp_future_test_df))
+                    future_test_dataset = ImageDataset(
+                        exp_future_test_df,
+                        dataset=self.dataset,
+                        transform=self.test_transform,
+                        cls_list=self.exposed_classes + future_test_cls,
+                        data_dir=self.data_dir
+                    )
+                    self.future_test_loader = DataLoader(
+                        future_test_dataset,
+                        shuffle=True,
+                        batch_size=batch_size,
+                        num_workers=n_worker,
+                    )
 
-                
+              
         eval_dict = self.evaluation(self.test_loader, self.criterion)
         self.report_test(sample_num, eval_dict["avg_loss"], eval_dict["avg_acc"], eval_dict["cls_acc"])
-        if self.future_train_loader is not None:
+        if self.future_train_loader is not None and self.use_feature_eval:
             future_eval_dict = self.future_evaluation()
             self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])        
         self.added = False
