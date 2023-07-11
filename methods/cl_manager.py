@@ -799,6 +799,69 @@ class CLManagerBase:
         knowledge_gain_rate = knowledge_gain/(max_knowledge-prev_total_knowledge)
         return knowledge_loss_rate, knowledge_gain_rate
 
+    def future_evaluation(self):
+        
+        total_correct, total_num_data, total_loss = 0.0, 0.0, 0.0
+        correct_l = torch.zeros(self.n_classes)
+        num_data_l = torch.zeros(self.n_classes)
+        
+        # k-shot training temp_model using future data
+        temp_model = copy.deepcopy(self.model)
+        temp_model.train()
+        for name, param in temp_model.named_parameters():
+            if 'fc' not in name:
+                param.requires_grad = False
+        
+        for i in range(self.future_training_iterations):
+            for i, data in enumerate(self.future_train_loader):
+                x = data["image"].to(self.device)
+                y = data["label"].to(self.device)
+                
+                self.optimizer.zero_grad()
+
+                # logit can not be used anymore
+                with torch.cuda.amp.autocast(self.use_amp):
+                    logit, feature = temp_model(x, get_feature=True)
+                    loss = self.criterion(logit, y)
+                
+                if self.use_amp:
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    self.optimizer.step()
+
+        # for calculating forward transfer
+        for i, data in enumerate(self.future_test_loader):
+            x = data["image"]
+            y = data["label"]
+            x = x.to(self.device)
+            y = y.to(self.device)
+
+            logit, _ = temp_model(x)
+
+            loss = self.criterion(logit, y)
+            pred = torch.argmax(logit, dim=-1)
+            _, preds = logit.topk(self.topk, 1, True, True)
+
+            total_correct += torch.sum(preds == y.unsqueeze(1)).item()
+            total_num_data += y.size(0)
+
+            xlabel_cnt, correct_xlabel_cnt = self._interpret_pred(y, pred)
+            correct_l += correct_xlabel_cnt.detach().cpu()
+            num_data_l += xlabel_cnt.detach().cpu()
+
+            total_loss += loss.item()
+            label += y.tolist()
+
+        avg_acc = total_correct / total_num_data
+        avg_loss = total_loss / len(self.future_test_loader)
+        cls_acc = (correct_l / (num_data_l + 1e-5)).numpy().tolist()
+        ret = {"avg_loss": avg_loss, "avg_acc": avg_acc, "cls_acc": cls_acc}
+        
+        return ret
+
     def get_flops_parameter(self):
         _, _, _, inp_size, inp_channel = get_statistics(dataset=self.dataset)
         [forward_mac, backward_mac, params, fc_params, buffers], \
@@ -931,70 +994,6 @@ class MemoryBase:
         self.class_usage_count = np.append(self.class_usage_count, 0.0)
         print("!!added", class_name)
         print("self.cls_dict", self.cls_dict)
-
-
-    def future_evaluation(self):
-        
-        total_correct, total_num_data, total_loss = 0.0, 0.0, 0.0
-        correct_l = torch.zeros(self.n_classes)
-        num_data_l = torch.zeros(self.n_classes)
-        
-        # k-shot training temp_model using future data
-        temp_model = copy.deepcopy(self.model)
-        temp_model.train()
-        for name, param in temp_model.named_parameters():
-            if 'fc' not in name:
-                param.requires_grad = False
-        
-        for i in range(self.future_training_iterations):
-            for i, data in enumerate(self.future_train_loader):
-                x = data["image"].to(self.device)
-                y = data["label"].to(self.device)
-                
-                self.optimizer.zero_grad()
-
-                # logit can not be used anymore
-                with torch.cuda.amp.autocast(self.use_amp):
-                    logit, feature = temp_model(x, get_feature=True)
-                    loss = self.criterion(logit, y)
-                
-                if self.use_amp:
-                    self.scaler.scale(loss).backward()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-                else:
-                    loss.backward()
-                    self.optimizer.step()
-
-        # for calculating forward transfer
-        for i, data in enumerate(self.future_test_loader):
-            x = data["image"]
-            y = data["label"]
-            x = x.to(self.device)
-            y = y.to(self.device)
-
-            logit, _ = temp_model(x)
-
-            loss = self.criterion(logit, y)
-            pred = torch.argmax(logit, dim=-1)
-            _, preds = logit.topk(self.topk, 1, True, True)
-
-            total_correct += torch.sum(preds == y.unsqueeze(1)).item()
-            total_num_data += y.size(0)
-
-            xlabel_cnt, correct_xlabel_cnt = self._interpret_pred(y, pred)
-            correct_l += correct_xlabel_cnt.detach().cpu()
-            num_data_l += xlabel_cnt.detach().cpu()
-
-            total_loss += loss.item()
-            label += y.tolist()
-
-        avg_acc = total_correct / total_num_data
-        avg_loss = total_loss / len(self.future_test_loader)
-        cls_acc = (correct_l / (num_data_l + 1e-5)).numpy().tolist()
-        ret = {"avg_loss": avg_loss, "avg_acc": avg_acc, "cls_acc": cls_acc}
-        
-        return ret
 
 
     def whole_retrieval(self):
