@@ -10,6 +10,7 @@ from methods.mir_new import MIR
 from methods.aser_new import ASER
 from methods.bic_new import BiasCorrection
 from methods.etf import ETF
+from methods.scr import SCR
 from methods.etf_er import ETF_ER
 from methods.etf_er_joint import ETF_ER_JOINT
 from methods.etf_er_ce import ETF_ER_CE
@@ -210,6 +211,14 @@ def select_method(args, train_datalist, test_datalist, device):
         )
     elif args.mode == "twf":        
         method = TWF(
+            train_datalist=train_datalist,
+            test_datalist=test_datalist,
+            device=device,
+            **kwargs,
+        )
+        
+    elif args.mode == "scr":        
+        method = SCR(
             train_datalist=train_datalist,
             test_datalist=test_datalist,
             device=device,

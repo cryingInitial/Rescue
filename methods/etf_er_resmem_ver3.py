@@ -525,6 +525,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 self.save_features(feature_pickle_name, class_pickle_name)
 
                 with open(fc_pickle_name, 'wb') as f:
+                    '''
                     num_leanred_class = len(self.memory.cls_list)
                     '''
                     index = []
