@@ -56,7 +56,6 @@ class CLManagerBase:
         self.transforms = kwargs["transforms"]
         self.num_future_class = kwargs["num_future_class"]
         self.criterion = nn.CrossEntropyLoss(reduction="mean").to(self.device)
-
         self.data_dir = kwargs["data_dir"]
         if self.data_dir is None:
             self.data_dir = os.path.join("dataset", self.dataset)
@@ -513,12 +512,12 @@ class CLManagerBase:
                         num_workers=n_worker,
                     )
 
-              
+                    future_eval_dict = self.future_evaluation()
+                    self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])              
+                    
         eval_dict = self.evaluation(self.test_loader, self.criterion)
         self.report_test(sample_num, eval_dict["avg_loss"], eval_dict["avg_acc"], eval_dict["cls_acc"])
-        if self.future_train_loader is not None and self.use_future_eval:
-            future_eval_dict = self.future_evaluation()
-            self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])        
+        
         self.added = False
         return eval_dict
 
