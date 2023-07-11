@@ -474,8 +474,7 @@ class CLManagerBase:
                 batch_size=batch_size,
                 num_workers=n_worker,
             )
-            eval_dict = self.evaluation(self.test_loader, self.criterion)
-            self.report_test(sample_num, eval_dict["avg_loss"], eval_dict["avg_acc"], eval_dict["cls_acc"])
+            
             
             if len(cls_order) - len(self.exposed_classes) <= self.num_future_class:
                 self.future_train_loader = None
@@ -520,9 +519,12 @@ class CLManagerBase:
                     num_workers=n_worker,
                 )
 
-                future_eval_dict = self.future_evaluation()
-                self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])
-        
+                
+        eval_dict = self.evaluation(self.test_loader, self.criterion)
+        self.report_test(sample_num, eval_dict["avg_loss"], eval_dict["avg_acc"], eval_dict["cls_acc"])
+        if self.future_train_loader is not None:
+            future_eval_dict = self.future_evaluation()
+            self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])        
         self.added = False
         return eval_dict
 
