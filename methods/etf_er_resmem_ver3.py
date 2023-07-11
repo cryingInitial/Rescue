@@ -40,6 +40,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         self.masks = {}
         self.residual_dict_index={}
         self.softmax2 = nn.Softmax(dim=1).to(self.device)
+        self.softmax = nn.Softmax(dim=0).to(self.device)
         
         if self.loss_criterion == "DR":
             self.criterion = DR_loss().to(self.device)
@@ -73,7 +74,22 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         cos = inner_product / (a_norm * b_norm)
         return cos
 
-    def get_within_class_covariance(self, mean_vec_list, feature_dict):
+    def batch_cov(self, points):
+        B, D = points.size()
+        mean = points.mean(dim=0)
+        diffs = (points - mean)
+        prods = torch.bmm(diffs.unsqueeze(2), diffs.unsqueeze(1))
+        return torch.mean(prods.diagonal(offset=0, dim1=-1, dim2=-2).sum(-1))
+    
+    def get_within_class_covariance(self, feature_dict):
+        cov_tensor = torch.zeros(len(list(feature_dict.keys()))).to(self.device)
+        # feature dimension 512로 fixed
+        for idx, klass in enumerate(list(feature_dict.keys())):
+            cov_tensor[klass] = self.batch_cov(feature_dict[klass])
+        return cov_tensor
+    
+    
+    def get_within_class_covariance2(self, mean_vec_list, feature_dict):
         cov_tensor = torch.zeros(len(list(mean_vec_list.keys()))).to(self.device)
         # feature dimension 512로 fixed
         for idx, klass in enumerate(list(feature_dict.keys())):
@@ -85,7 +101,8 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             W /= total_num
             cov_tensor[idx] = torch.trace(W)
         return cov_tensor
-
+    
+    
     def get_nc1(self, mean_vec_list, feature_dict):
         nc1_tensor = torch.zeros(len(list(mean_vec_list.keys()))).to(self.device)
         # for global avg calcuation, not just avg mean_vec, feature mean directly (since it is imbalanced dataset)
@@ -108,7 +125,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             
         return  nc1_tensor
 
-    def get_within_whole_class_covariance(self, whole_mean_vec, feature_list):
+    def get_within_whole_class_covariance2(self, whole_mean_vec, feature_list):
         # feature dimension 512로 fixed
         W = torch.zeros(self.model.fc.in_features, self.model.fc.in_features).to(self.device)
         total_num = 0
@@ -117,6 +134,10 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         total_num += len(feature_list)
         W /= total_num
         return torch.trace(W)
+
+    def get_within_whole_class_covariance(self, whole_features):
+        #return torch.stack(sum([v for v in feature_dict.values()], []))
+        return self.batch_cov(whole_features)
 
     def sample_inference(self, samples):
         with torch.no_grad():
@@ -177,17 +198,17 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 logit = feature @ self.etf_vec
                 loss = self.criterion(logit, y)
                 residual = (target - feature).detach()
-                #residual = (F.one_hot(y, num_classes=self.num_learned_class) - self.softmax(logit/self.softmax_temperature)).detach()
 
             # residual dict update
             if self.use_residual:
-                for idx, t in enumerate(y):
-                    self.residual_dict[t.item()].append(residual[idx])
-                    self.feature_dict[t.item()].append(feature.detach()[idx])     
-                     
-                    if len(self.residual_dict[t.item()]) > self.residual_num:
-                        self.residual_dict[t.item()] = self.residual_dict[t.item()][1:]
-                        self.feature_dict[t.item()] = self.feature_dict[t.item()][1:]
+                for label in torch.unique(y):
+                    index = (y==label).nonzero(as_tuple=True)[0]
+                    self.residual_dict[label.item()].extend(residual[index])
+                    self.feature_dict[label.item()].extend(feature.detach()[index])
+                    
+                    if len(self.residual_dict[label.item()]) > self.residual_num:
+                        self.residual_dict[label.item()] = self.residual_dict[label.item()][-self.residual_num:]
+                        self.feature_dict[label.item()] = self.feature_dict[label.item()][-self.residual_num:]
             
 
             # accuracy calculation
@@ -445,8 +466,9 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 mean_vec_list[cls] = torch.mean(stacked_feature_dict, dim=0)
                 
             mu_G = torch.mean(torch.stack(list(future_feature_dict.values())[0]), dim=0)
+            whole_cov_value2 = self.get_within_whole_class_covariance2(mu_G, feature_list)
             whole_cov_value = self.get_within_whole_class_covariance(mu_G, feature_list)
-            
+            print("whole_cov_value2", whole_cov_value2, "whole_cov_value", whole_cov_value)
             if self.residual_strategy == "within":
                 cov_tensor = self.get_within_class_covariance(mean_vec_list, nc1_feature_dict)
                 prob = torch.ones_like(cov_tensor).to(self.device) - cov_tensor / whole_cov_value
@@ -531,35 +553,30 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         num_data_l = torch.zeros(self.n_classes).to(self.device)
         self.model.eval()
 
-
         if self.use_residual:
             residual_list = torch.stack(sum([v for v in self.residual_dict.values()], [])) #torch.stack(list(self.residual_dict.values())[0])
             feature_list = torch.stack(sum([v for v in self.feature_dict.values()], [])) #torch.stack(list(self.feature_dict.values())[0])
-            print("feature_list", feature_list.shape, "residual_list", residual_list.shape)
+            norm_feature_value = torch.norm(feature_list, p=2, dim=0, keepdim=True)
             
             # residual dict 내의 feature들이 어느정도 잘 모여있는 상태여야 residual term good
             nc1_feature_dict = defaultdict(list)
-            mean_vec_list = defaultdict(list)
             for cls in list(self.feature_dict.keys()):
-                stacked_feature_dict = torch.stack(self.feature_dict[cls]).detach()
-                nc1_feature_dict[cls] = stacked_feature_dict / torch.norm(stacked_feature_dict, p=2, dim=1, keepdim=True)
-                mean_vec_list[cls] = torch.mean(stacked_feature_dict, dim=0)
-                
-            mu_G = torch.mean(torch.stack(list(self.feature_dict.values())[0]), dim=0)
-            whole_cov_value = self.get_within_whole_class_covariance(mu_G, feature_list)
+                nc1_feature_dict[cls] = torch.stack(self.feature_dict[cls]) / norm_feature_value
             
             if self.residual_strategy == "within":
-                cov_tensor = self.get_within_class_covariance(mean_vec_list, nc1_feature_dict)
+                whole_cov_value = self.get_within_whole_class_covariance(feature_list / norm_feature_value)
+                cov_tensor = self.get_within_class_covariance(nc1_feature_dict)
                 prob = torch.ones_like(cov_tensor).to(self.device) - cov_tensor / whole_cov_value
-                print("prob")
-                print(prob)
+            '''
             elif self.residual_strategy == "nc1":
                 nc1_tensor = self.get_nc1(mean_vec_list, nc1_feature_dict)
                 prob = torch.ones_like(cov_tensor).to(self.device) - nc1_tensor / whole_cov_value
                 print("prob")
                 print(prob)
+            '''
                 
         with torch.no_grad():
+            rand_num = torch.rand(1).to(self.device)
             for i, data in enumerate(test_loader):
                 x = data["image"]
                 y = data["label"]
@@ -586,7 +603,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                     
                 if self.use_residual:
                     if self.residual_strategy == "within" or self.residual_strategy == "nc1":
-                        index = (prob > torch.rand(1).to(self.device)).nonzero(as_tuple=True)[0]
+                        index = (prob > rand_num).nonzero(as_tuple=True)[0]
                         mask = torch.isin(y, index)
                         print("mask", (mask==1).sum())
                         residual_terms *= mask.unsqueeze(1)
