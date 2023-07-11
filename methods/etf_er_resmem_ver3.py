@@ -527,7 +527,6 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 with open(fc_pickle_name, 'wb') as f:
                     '''
                     num_leanred_class = len(self.memory.cls_list)
-                    '''
                     index = []
                     for i in range(4):
                         #inf_index += list(range(i * real_num_class, i * real_num_class + real_entered_num_class))
@@ -542,11 +541,6 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 with open(pickle_name_stds_list, 'wb') as f:
                     pickle.dump(self.stds_list, f, pickle.HIGHEST_PROTOCOL)
                 
-                # ood data 저장
-                '''
-                if self.ood_strategy != "none": 
-                    self.ood_inference()
-                '''
         
 
     def reservoir_memory(self, sample):
@@ -655,7 +649,6 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             future_residual_dict[key] = self.residual_dict[key]
             future_feature_dict[key] = self.feature_dict[key]
         '''
-
         # pre-processing for residual 
         if self.use_residual:
             residual_list = []
