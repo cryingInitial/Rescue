@@ -371,7 +371,6 @@ class ResNet(nn.Module):
         out2 = self.layer2(out1)
         out3 = self.layer3(out2)
         out4 = self.layer4(out3)
-
         out4 = self.avgpool(out4)
         
         if self.neck_forward:
@@ -385,7 +384,7 @@ class ResNet(nn.Module):
         # for moco 
         proj_output = self.proj(torch.flatten(out4, 1))
         
-        return feature, proj_output
+        return proj_output, feature
         '''
         if get_feature:
             return out, feature
