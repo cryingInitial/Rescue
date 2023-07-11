@@ -1,14 +1,14 @@
 #/bin/bash
 
 # CIL CONFIG
-NOTE="etf_er_resmem_ver3_cifar10_sigma10_iter1_future_eval"
+NOTE="etf_er_resmem_ver3_cifar100_sigma0_residual_num_20_iter3"
 MODE="etf_er_resmem_ver3"
 K_COEFF="4"
 TEMPERATURE="0.125"
 TRANSFORM_ON_GPU="--transform_on_gpu"
 #TRANSFORM_ON_GPU=""
-N_WORKER=1
-FUTURE_STEPS=1
+N_WORKER=2
+FUTURE_STEPS=4
 EVAL_N_WORKER=2
 EVAL_BATCH_SIZE=1000
 USE_KORNIA=""
@@ -19,30 +19,28 @@ SELECT_CRITERION="softmax"
 LOSS_CRITERION="DR"
 SOFTMAX_TEMPERATURE=1.0
 KNN_SIGMA=0.9
-RESIDUAL_NUM=50
-DATASET="cifar10" # cifar10, cifar100, tinyimagenet, imagenet
-ONLINE_ITER=1
-SIGMA=10
+RESIDUAL_NUM=20
+DATASET="cifar100" # cifar10, cifar100, tinyimagenet, imagenet
+ONLINE_ITER=3
+SIGMA=0
 REPEAT=1
 INIT_CLS=100
 USE_AMP="--use_amp"
-NUM_EVAL_CLASS=10
-NUM_CLASS=10
-RESIDUAL_STRATEGY="within" # prob, none
+NUM_EVAL_CLASS=100
+NUM_CLASS=100
+RESIDUAL_STRATEGY="within" # within, none
 SCL_COEFF=0.01
 MOCO_COEFF=0.01
 NUM_K_SHOT=20
 FUTURE_TRAINING_ITERATIONS=10
-
-#TRANSFORMS=['randaug', 'cutmix']
 
 # Neck Layer Including
 #USE_NECK_FORWARD=""
 USE_NECK_FORWARD="--use_neck_forward"
 
 ### STORING PICKLE ###
-STORE_PICKLE="--store_pickle"
-#STORE_PICKLE=""
+#STORE_PICKLE="--store_pickle"
+STORE_PICKLE=""
 
 ### RESIDUAL ###
 USE_RESIDUAL="--use_residual"

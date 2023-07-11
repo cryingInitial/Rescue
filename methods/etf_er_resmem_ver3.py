@@ -272,87 +272,6 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             mean_vec_tensor_list[cls] = mean_vec_list[cls]
         
         return mean_vec_tensor_list
-
-    def ood_store(self, ood_dict):
-        name_prefix = self.note + "/etf_resmem_sigma" + str(self.sigma) + "_num_" + str(self.sample_num) + "_iter" + str(self.online_iter) + "_sigma" + str(self.softmax_temperature) + "_criterion_" + self.select_criterion + "_top_k" + str(self.knn_top_k) + "_knn_sigma"+ str(self.knn_sigma)
-        ood_pickle_name = name_prefix + "_ood.pickle"        
-
-        for key in list(ood_dict.keys()):
-            ood_dict[key] = torch.cat(ood_dict[key])
-            
-        with open(ood_pickle_name, 'wb') as f:
-            pickle.dump(ood_dict, f, pickle.HIGHEST_PROTOCOL) 
-
-    def ood_inference(self, ood_num_samples, ood_sampling_num=1):
-        ood_dict = {}
-        new_x_data = []
-        new_y_data = []
-        
-        feature_cluster = self.get_mean_vec()
-        loss = None
-        #for ood_data in ood_data_list:
-        #ood_data = self.memory.generate_ood_class(num_samples=int(self.batch_size/4))
-        ood_data_list = [self.memory.generate_ood_class(num_samples=ood_num_samples) for _ in range(ood_sampling_num)]
-        for ood_data in ood_data_list:
-            if ood_data is not None:
-                if self.ood_strategy == "cutmix":
-                    key, x1, x2 = ood_data
-                    x1 = load_batch(x1, self.data_dir, self.test_transform)
-                    x2 = load_batch(x2, self.data_dir, self.test_transform)                
-                    x1 = x1.to(self.device)
-                    x2 = x2.to(self.device)
-                    
-                    if key not in self.masks.keys():
-                        self.masks[key] = generate_masking(x1, self.device)
-                    #if key not in ood_dict.keys():
-                    #    ood_dict[key] = []
-                    index, mask = self.masks[key]
-
-                    if self.use_patch_permutation:
-                        new_x1, _ = generate_new_data(x1, x2, self.device, mask, index)
-                    else:
-                        new_x1, _ = generate_new_data(x1, x2, self.device, mask)
-
-                    new_x_data.append(new_x1)
-                    #new_y_data.append(new_y1) # TODO new_y1을 cutmix에서 어떻게 define할지
-
-                    '''
-                    _, feature = self.model(new_x1, get_feature=True)
-                    feature = self.pre_logits(feature)            
-                    loss = self.regularization_criterion(feature, feature_cluster, self.num_learned_class)
-                    ood_dict[key].append(feature)
-                    '''
-                
-                elif self.ood_strategy == "rotate":
-                    x, y = ood_data
-                    x = load_batch(x, self.data_dir, self.test_transform)
-                    x = x.to(self.device)
-                    
-                    new_x, new_y = my_segmentation_transforms(x, y, self.real_num_classes)
-                    new_y = new_y.to(self.device)
-                    new_x_data.append(new_x)
-                    new_y_data.append(new_y)
-                    '''
-                    _, feature_right = self.model(right_x, get_feature=True)
-                    feature_right = self.pre_logits(feature_right)
-                    
-                    _, feature_left = self.model(left_x, get_feature=True)
-                    feature_left = self.pre_logits(feature_left)
-                    
-                    right_key = str(cls) + "_right"
-                    left_key = str(cls) + "_left"
-                    if right_key not in ood_dict.keys():
-                        ood_dict[right_key] = []
-                        ood_dict[left_key] = []
-                    ood_dict[right_key].append(feature_right)
-                    ood_dict[left_key].append(feature_left)
-                    '''
-                    
-        #return ood_dict, loss
-        if len(new_x_data) == 0:
-            return None
-        else:
-            return torch.cat(new_x_data), torch.cat(new_y_data)
     
     def update_memory(self, sample, sample_num=None):
         #self.reservoir_memory(sample)
@@ -612,10 +531,12 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         num_data_l = torch.zeros(self.n_classes).to(self.device)
         self.model.eval()
 
-        if self.use_residual:
-            residual_list = torch.stack(list(self.residual_dict.values())[0])
-            feature_list = torch.stack(list(self.feature_dict.values())[0])
 
+        if self.use_residual:
+            residual_list = torch.stack(sum([v for v in self.residual_dict.values()], [])) #torch.stack(list(self.residual_dict.values())[0])
+            feature_list = torch.stack(sum([v for v in self.feature_dict.values()], [])) #torch.stack(list(self.feature_dict.values())[0])
+            print("feature_list", feature_list.shape, "residual_list", residual_list.shape)
+            
             # residual dict 내의 feature들이 어느정도 잘 모여있는 상태여야 residual term good
             nc1_feature_dict = defaultdict(list)
             mean_vec_list = defaultdict(list)
@@ -664,12 +585,11 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                     residual_terms = torch.bmm(w_i_lists.unsqueeze(1), residual_lists).squeeze()
                     
                 if self.use_residual:
-                        
                     if self.residual_strategy == "within" or self.residual_strategy == "nc1":
                         index = (prob > torch.rand(1).to(self.device)).nonzero(as_tuple=True)[0]
                         mask = torch.isin(y, index)
+                        print("mask", (mask==1).sum())
                         residual_terms *= mask.unsqueeze(1)
-                        
                     features += residual_terms
                         
                 if self.loss_criterion == "DR":
