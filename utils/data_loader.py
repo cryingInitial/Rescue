@@ -1738,12 +1738,17 @@ class DistillationMemory(MemoryDataset):
             self.previous_idx = np.append(self.previous_idx, indices)
         return data
 
+def get_train_datalist(dataset, sigma, repeat, init_cls, rnd_seed, mode):
+    if mode=='remind':
+        with open(f"collections/{dataset}/F_{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
+            train_list = json.load(fp)
+        return train_list['stream'], train_list['cls_dict'], train_list['cls_addition']
+    else:
+        with open(f"collections/{dataset}/{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
+            train_list = json.load(fp)
+        print("train_list", train_list.keys())
+        return train_list['stream'], train_list['cls_dict'], train_list['cls_addition'], train_list['cls_order'], train_list["future_train_dict_k5"], train_list["future_train_dict_k10"], train_list["future_train_dict_k20"], train_list["future_train_dict_k100"]
 
-def get_train_datalist(dataset, sigma, repeat, init_cls, rnd_seed):
-    with open(f"collections/{dataset}/{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
-        train_list = json.load(fp)
-    print("train_list", train_list.keys())
-    return train_list['stream'], train_list['cls_dict'], train_list['cls_addition'], train_list['cls_order'], train_list["future_train_dict_k5"], train_list["future_train_dict_k10"], train_list["future_train_dict_k20"], train_list["future_train_dict_k100"]
 
 def get_test_datalist(dataset) -> List:
     try:
@@ -1753,6 +1758,10 @@ def get_test_datalist(dataset) -> List:
         print("test name", f"collections/{dataset}/{dataset}_val2.json")
         return pd.read_json(f"collections/{dataset}/{dataset}_val2.json").to_dict(orient="records")
 
+def get_train_baseinit_datalist(dataset, sigma, repeat, init_cls, rnd_seed):
+    with open(f"collections/{dataset}/G_{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
+        train_list = json.load(fp)
+    return train_list['stream'], train_list['cls_dict']
 
 def get_statistics(dataset: str):
     """

@@ -733,7 +733,7 @@ def select_moco_model(model_name, dataset, num_classes=None, opt_dict=None, pre_
     return resnet18_moco(pretrained=pre_trained, dataset=False, progress=True, F=False, G=False, Neck = Neck, K=K, dim=dim)
 
 def select_model(model_name, dataset, num_classes=None, opt_dict=None, pre_trained=False, G=False, F=False, Neck = False):
-    return resnet18(pretrained=pre_trained, dataset=False, progress=True, F=False, G=False, Neck = Neck)
+    return resnet18(pretrained=pre_trained, dataset=False, progress=True, F=F, G=G, Neck = Neck)
 
 ##### for ASER #####
 def compute_knn_sv(model, eval_x, eval_y, cand_x, cand_y, k, device="cpu"):
@@ -848,22 +848,22 @@ def sorted_cand_ind(eval_df, cand_df, n_eval, n_cand):
     return sorted_cand_ind_
 
 
-class ModelWrapper(nn.Module):
-    def __init__(self, model, output_layer_names, return_single=False):
-        super(ModelWrapper, self).__init__()
-        self.model = model
-        self.output_layer_names = output_layer_names
-        self.outputs = {}
-        self.return_single = return_single
-        add_hooks(self.model, self.outputs, self.output_layer_names)
+# class ModelWrapper(nn.Module):
+#     def __init__(self, model, output_layer_names, return_single=False):
+#         super(ModelWrapper, self).__init__()
+#         self.model = model
+#         self.output_layer_names = output_layer_names
+#         self.outputs = {}
+#         self.return_single = return_single
+#         add_hooks(self.model, self.outputs, self.output_layer_names)
 
-    def forward(self, images):
-        self.model(images)
-        output_vals = [self.outputs[output_layer_name] for output_layer_name in self.output_layer_names]
-        if self.return_single:
-            return output_vals[0]
-        else:
-            return output_vals
+#     def forward(self, images):
+#         self.model(images)
+#         output_vals = [self.outputs[output_layer_name] for output_layer_name in self.output_layer_names]
+#         if self.return_single:
+#             return output_vals[0]
+#         else:
+#             return output_vals
 
 
 
