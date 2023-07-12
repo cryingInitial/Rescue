@@ -1,14 +1,18 @@
 #/bin/bash
 
 # CIL CONFIG
-NOTE="etf_er_resmem_ver3_cifar100_sigma0_residual_num_20_iter3"
-MODE="etf_er_resmem_ver3"
+NOTE="etf_er_resmem_ver8_sigma10_within"
+MODE="etf_er_resmem_ver8"
 K_COEFF="4"
 TEMPERATURE="0.125"
 TRANSFORM_ON_GPU="--transform_on_gpu"
 #TRANSFORM_ON_GPU=""
+<<<<<<< HEAD
 
 N_WORKER=2
+=======
+N_WORKER=1
+>>>>>>> db57c4ba7fe58649ca90ca68a76aa8577acd04ae
 FUTURE_STEPS=4
 
 EVAL_N_WORKER=2
@@ -16,22 +20,21 @@ EVAL_BATCH_SIZE=1000
 USE_KORNIA=""
 UNFREEZE_RATE=0.25
 SEEDS="1"
-KNN_TOP_K="21"
+KNN_TOP_K="15"
 SELECT_CRITERION="softmax"
 LOSS_CRITERION="DR"
 SOFTMAX_TEMPERATURE=1.0
 
 KNN_SIGMA=0.9
-RESIDUAL_NUM=20
-DATASET="cifar100" # cifar10, cifar100, tinyimagenet, imagenet
-ONLINE_ITER=3
-
-SIGMA=0
+RESIDUAL_NUM=50
+DATASET="cifar10" # cifar10, cifar100, tinyimagenet, imagenet
+ONLINE_ITER=1
+SIGMA=10
 REPEAT=1
 INIT_CLS=100
 USE_AMP="--use_amp"
-NUM_EVAL_CLASS=100
-NUM_CLASS=100
+NUM_EVAL_CLASS=10
+NUM_CLASS=10
 RESIDUAL_STRATEGY="within" # within, none
 SCL_COEFF=0.01
 MOCO_COEFF=0.01
