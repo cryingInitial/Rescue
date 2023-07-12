@@ -148,27 +148,28 @@ class ETF_ER_RESMEM_VER8(ETF_ER_RESMEM_VER3):
         label_list = torch.stack(sum([v for v in self.label_dict.values()], []))
         print("image_list", image_list.shape)
         print("label_list", label_list.shape)
-        batch_size = 512
+        batch_size = 256
         with torch.no_grad():
             for i in range((len(image_list) // batch_size) + 1):
                 print("from", i*batch_size, "to", min((i+1)*batch_size, len(image_list)))
                 images = image_list[i*batch_size : min((i+1)*batch_size, len(image_list))]
                 labels = label_list[i*batch_size : min((i+1)*batch_size, len(image_list))]
-                _, features = self.model(images.to(self.device))
-                features = self.pre_logits(features) # added
-                target = self.etf_vec[:, labels].t()
-                residual = (target - features).detach()
+                if len(images)!=0:
+                    _, features = self.model(images.to(self.device))
+                    features = self.pre_logits(features) # added
+                    target = self.etf_vec[:, labels].t()
+                    residual = (target - features).detach()
 
-                # residual dict update
-                if self.use_residual:
-                    for label in torch.unique(labels):
-                        index = (labels==label).nonzero(as_tuple=True)[0]
-                        self.residual_dict[label.item()].extend(residual[index])
-                        self.feature_dict[label.item()].extend(features.detach()[index])
-                        
-                        if len(self.residual_dict[label.item()]) > self.residual_num:
-                            self.residual_dict[label.item()] = self.residual_dict[label.item()][-self.residual_num:]
-                            self.feature_dict[label.item()] = self.feature_dict[label.item()][-self.residual_num:] 
+                    # residual dict update
+                    if self.use_residual:
+                        for label in torch.unique(labels):
+                            index = (labels==label).nonzero(as_tuple=True)[0]
+                            self.residual_dict[label.item()].extend(residual[index])
+                            self.feature_dict[label.item()].extend(features.detach()[index])
+                            
+                            if len(self.residual_dict[label.item()]) > self.residual_num:
+                                self.residual_dict[label.item()] = self.residual_dict[label.item()][-self.residual_num:]
+                                self.feature_dict[label.item()] = self.feature_dict[label.item()][-self.residual_num:] 
             
     
     def evaluation(self, test_loader, criterion):
