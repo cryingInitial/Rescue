@@ -801,6 +801,16 @@ class CLManagerBase:
         
         # k-shot training temp_model using future data
         temp_model = copy.deepcopy(self.model)
+        prev_weight = copy.deepcopy(temp_model.fc.weight.data)
+        prev_bias = copy.deepcopy(temp_model.fc.bias.data)
+        temp_model.fc = nn.Linear(temp_model.fc.in_features, self.num_learned_class + self.num_future_class).to(self.device)
+        with torch.no_grad():
+            if self.num_learned_class > 1:
+                temp_model.fc.weight[:self.num_learned_class] = prev_weight
+                temp_model.fc.bias[:self.num_learned_class] = prev_bias
+
+        temp_optimizer = select_optimizer(self.opt_name, self.lr, temp_model)
+
         temp_model.train()
         for name, param in temp_model.named_parameters():
             if 'fc' not in name:
@@ -811,7 +821,7 @@ class CLManagerBase:
                 x = data["image"].to(self.device)
                 y = data["label"].to(self.device)
                 
-                self.optimizer.zero_grad()
+                temp_optimizer.zero_grad()
 
                 # logit can not be used anymore
                 with torch.cuda.amp.autocast(self.use_amp):
@@ -820,11 +830,11 @@ class CLManagerBase:
                 
                 if self.use_amp:
                     self.scaler.scale(loss).backward()
-                    self.scaler.step(self.optimizer)
+                    self.scaler.step(temp_optimizer)
                     self.scaler.update()
                 else:
                     loss.backward()
-                    self.optimizer.step()
+                    temp_optimizer.step()
 
         # for calculating forward transfer
         for i, data in enumerate(self.future_test_loader):
@@ -833,7 +843,7 @@ class CLManagerBase:
             x = x.to(self.device)
             y = y.to(self.device)
 
-            logit, _ = temp_model(x)
+            logit = temp_model(x)
 
             loss = self.criterion(logit, y)
             pred = torch.argmax(logit, dim=-1)
@@ -847,7 +857,6 @@ class CLManagerBase:
             num_data_l += xlabel_cnt.detach().cpu()
 
             total_loss += loss.item()
-            label += y.tolist()
 
         avg_acc = total_correct / total_num_data
         avg_loss = total_loss / len(self.future_test_loader)
