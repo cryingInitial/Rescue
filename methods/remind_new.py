@@ -51,7 +51,7 @@ class REMIND(CLManagerBase):
 
     def initialize_future(self):
     
-        self.memory = REMINDMemory(self.memory_size, self.device, self.ood_strategy)
+        self.memory = REMINDMemory(self.memory_size, self.device)
         print("Begin Base_initialization")
         self.base_initialize()
         print("FINISH BASE INITIALIZATION")
@@ -113,11 +113,7 @@ class REMIND(CLManagerBase):
             self.memory.add_new_class(clss[i])
         print("EXPOSED CLASSES", self.exposed_classes)
         
-        self.model = select_model(self.model_name, self.dataset, 1).to(self.device)
-        self.model.fc = nn.Linear(self.model.fc.in_features, self.baseinit_nclasses).to(self.device)
-        self.model.to(self.device)
         self.num_channels = self.model.fc.in_features
-        self.optimizer = select_optimizer(self.opt_name, 0.001, self.model)
         self.baseinit_train_transform = transforms.Compose([
             transforms.Resize(size=(224, 224)),
             transforms.RandomCrop(size=(224, 224), padding=4),
@@ -126,9 +122,13 @@ class REMIND(CLManagerBase):
             transforms.ToTensor(),
             transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
         ])
-    
+
+        self.model = select_model(self.model_name, self.dataset, 1).to(self.device)
+        self.model.fc = nn.Linear(self.model.fc.in_features, self.baseinit_nclasses).to(self.device)
+        self.model.to(self.device)
+        self.optimizer = select_optimizer(self.opt_name, 0.001, self.model)
         train_df = pd.DataFrame(self.baseinit_datalist)
-        train_dataset = ImageDataset(train_df, self.dataset, self.made_train_transform, cls_list=self.exposed_classes)
+        train_dataset = ImageDataset(train_df, self.dataset, self.baseinit_train_transform, cls_list=self.exposed_classes)
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
         test_df = pd.DataFrame(self.test_datalist)
         exp_test_df = test_df[test_df['klass'].isin(self.exposed_classes)]
@@ -175,7 +175,8 @@ class REMIND(CLManagerBase):
             train_acc = 100 * float(correct_train) / len(train_dataset) 
             test_acc = 100 * float(correct_test) / len(test_dataset) 
             print(train_acc, test_acc)
-        torch.save(self.model.state_dict(), f"{self.dataset}_cls{self.baseinit_nclasses}_REMIND_sigma{self.sigma}_seed{self.rnd_seed}_pretrained_epoch40.pt")
+            
+        # torch.save(self.model.state_dict(), f"{self.dataset}_cls{self.baseinit_nclasses}_REMIND_sigma{self.sigma}_seed{self.rnd_seed}_pretrained_epoch40.pt")
         
         return train_acc, test_acc
     
@@ -207,11 +208,6 @@ class REMIND(CLManagerBase):
         if c == 0:
             raise AssertionError('No previous ckpt names matched and the ckpt was not loaded properly.')
         return model
-    
-    def hook_fn(self, module, input, output):
-        # Store the output in a global variable
-        global output_tensor
-        output_tensor = output
     
     def base_initialize(self):
         train_acc, test_acc = self.pretrain()

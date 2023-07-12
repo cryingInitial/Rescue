@@ -4,7 +4,7 @@
 NOTE="remind_trial1" # Short description of the experiment. (WARNING: logs/results with the same note will be overwritten!)
 MODE="remind"
 DATASET="cifar10" # cifar10, cifar100, tinyimagenet, imagenet
-SIGMA=10
+SIGMA=0
 REPEAT=1
 INIT_CLS=100
 GPU_TRANSFORM="--gpu_transform"
@@ -13,11 +13,13 @@ SEEDS="1"
 
 if [ "$DATASET" == "cifar10" ]; then
     MEM_SIZE=50000 ONLINE_ITER=1
+    BASEINITCLASS_NUM=2
     MODEL_NAME="resnet18" EVAL_PERIOD=100
     BATCHSIZE=16; LR=3e-4 OPT_NAME="adam" SCHED_NAME="default" IMP_UPDATE_PERIOD=1
 
 elif [ "$DATASET" == "cifar100" ]; then
-    MEM_SIZE=2000 ONLINE_ITER=3
+    MEM_SIZE=2000 ONLINE_ITER=1
+    BASEINITCLASS_NUM=10
     MODEL_NAME="resnet18" EVAL_PERIOD=100
     BATCHSIZE=16; LR=3e-4 OPT_NAME="adam" SCHED_NAME="default" IMP_UPDATE_PERIOD=1
 
@@ -43,7 +45,7 @@ do
     --sigma $SIGMA --repeat $REPEAT --init_cls $INIT_CLS\
     --rnd_seed $RND_SEED \
     --model_name $MODEL_NAME --opt_name $OPT_NAME --sched_name $SCHED_NAME \
-    --lr $LR --batchsize $BATCHSIZE \
+    --baseinit_nclasses $BASEINITCLASS_NUM --lr $LR --batchsize $BATCHSIZE \
     --memory_size $MEM_SIZE $GPU_TRANSFORM --online_iter $ONLINE_ITER \
     --note $NOTE --eval_period $EVAL_PERIOD --imp_update_period $IMP_UPDATE_PERIOD $USE_AMP &
 done
