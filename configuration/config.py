@@ -69,10 +69,10 @@ def base_parser():
 
 
     parser.add_argument("--lambda_diverse_loss", default=0.3, type=float, help="")
-    parser.add_argument("--lambda_fp_replay", default=0.3, type=float, help="")
-    parser.add_argument("--lambda_fp", type=float, default=0.03, help="")
+    parser.add_argument("--lambda_fp_replay", default=1.2, type=float, help="")
+    parser.add_argument("--lambda_fp", type=float, default=0.005, help="")
     parser.add_argument("--der_alpha", type=float, default=0.3, help="")
-    parser.add_argument("--der_beta", type=float, default=0.8, help="")
+    parser.add_argument("--der_beta", type=float, default=1.2, help="")
 
     parser.add_argument("--rnd_seed", type=int, help="Random seed number.")
     parser.add_argument(

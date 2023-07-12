@@ -767,7 +767,7 @@ def select_model(model_name, dataset, num_classes=None, opt_dict=None, pre_train
     if opt_dict is not None:
         model = load_initial_checkpoint(pre_dataset, model, opt_dict["device"], load_cp_path = path_load_cp)
     ''' 
-    return resnet18(pretrained=pre_trained, dataset=False, progress=True, F=False, G=False)
+    return resnet18(pretrained=pre_trained, dataset=dataset,  F=False, G=False)
 
 ##### for ASER #####
 def compute_knn_sv(model, eval_x, eval_y, cand_x, cand_y, k, device="cpu"):

@@ -58,12 +58,25 @@ def main():
         train_datalist = train_datalist[:5000]
         random.shuffle(test_datalist)
         test_datalist = test_datalist[:2000]
-
+        
+        
+    if args.mode == 'ocs':
+        # redundant data since we pick half of the data for each iteration
+        new_train_datalist = []
+        for n_task in range(args.n_tasks):
+            new_train_datalist += train_datalist[n_task*args.samples_per_task:(n_task+1)*args.samples_per_task]
+            new_train_datalist += train_datalist[n_task*args.samples_per_task:(n_task+1)*args.samples_per_task]
+        
+        train_datalist = new_train_datalist
+        args.samples_per_task = args.samples_per_task * 2
+        
     logger.info(f"Select a CIL method ({args.mode})")
     method = select_method(args, train_datalist, test_datalist, device)
 
+
+
     print("\n###flops###\n")
-    #method.get_flops_parameter()
+    #method.get_flops_parameter()©
 
     eval_results = defaultdict(list)
 
@@ -74,7 +87,7 @@ def main():
     for i, data in enumerate(train_datalist):
 
         # explicit task boundary for twf
-        if samples_cnt % args.samples_per_task == 0 and (args.mode == "bic" or args.mode == "twf"):
+        if samples_cnt % args.samples_per_task == 0 and (args.mode == "bic" or args.mode == "twf" or args.mode == "ocs" or args.mode == "twf_der"):
             method.online_before_task(task_id)
             task_id += 1
 

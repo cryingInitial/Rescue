@@ -21,6 +21,11 @@ from methods.etf_er_resmem_ver5 import ETF_ER_RESMEM_VER5
 from methods.etf_er_initial import ETF_ER_INITIAL
 from methods.etf_er_resmem import ETF_ER_RESMEM
 from methods.baseline_new_joint import BASELINE_JOINT
+from methods.twf_new import TWF
+from methods.twf_der import TWF_DER
+from methods.ocs import OCS
+from methods.apply_new_model import App
+
 logger = logging.getLogger()
 
 
@@ -199,9 +204,29 @@ def select_method(args, train_datalist, test_datalist, device):
             device=device,
             **kwargs,
         )
-        
+    elif args.mode == "twf_der":
+        method = TWF_DER(
+            train_datalist=train_datalist,
+            test_datalist=test_datalist,
+            device=device,
+            **kwargs,
+        )
+    elif args.mode == "ocs":
+        method = OCS(
+            train_datalist=train_datalist,
+            test_datalist=test_datalist,
+            device=device,
+            **kwargs,
+        )
     elif args.mode == "ours":
         method = Ours(
+            train_datalist=train_datalist,
+            test_datalist=test_datalist,
+            device=device,
+            **kwargs,
+        )
+    elif args.mode == "app":
+        method = App(
             train_datalist=train_datalist,
             test_datalist=test_datalist,
             device=device,

@@ -7,7 +7,12 @@ import torch
 import torch.nn as nn
 import copy
 import torch.nn.functional as F
-import pickle5 as pickle
+try:
+    # version < 3.8
+    import pickle5 as pickle
+except ImportError:
+    # version >= 3.8
+    import pickle
 from utils.data_loader import ImageDataset, MultiProcessLoader, cutmix_data, get_statistics, generate_new_data, generate_masking
 import math
 import utils.train_utils 

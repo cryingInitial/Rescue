@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 from utils.torch_utils import load_state_dict_from_url 
-from mmcv.cnn import build_norm_layer
+# from mmcv.cnn import build_norm_layer
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -257,7 +257,7 @@ class ResNet(nn.Module):
         if len(replace_stride_with_dilation) != 3:
             raise ValueError("replace_stride_with_dilation should be None "
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
-        self.neck = MLPFFNNeck(in_channels = 512, out_channels=512)
+        # self.neck = MLPFFNNeck(in_channels = 512, out_channels=512)
         self.groups = groups
         self.base_width = width_per_group
         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
