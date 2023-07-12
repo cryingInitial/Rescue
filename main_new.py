@@ -49,7 +49,7 @@ def main():
     random.seed(args.rnd_seed)
 
     # get datalist
-    train_datalist, cls_dict, cls_addition, cls_order, future_train_dict_k5, future_train_dict_k10, future_train_dict_k20, future_train_dict_k100 = get_train_datalist(args.dataset, args.sigma, args.repeat, args.init_cls, args.rnd_seed)
+    train_datalist, cls_dict, cls_addition, cls_order, future_train_dict_k5, future_train_dict_k10, future_train_dict_k20, future_train_dict_k100 = get_train_datalist(args.dataset, args.sigma, args.repeat, args.init_cls, args.rnd_seed, args.mode)
     test_datalist = get_test_datalist(args.dataset)
     samples_cnt = 0
     # Reduce datalist in Debug mode
