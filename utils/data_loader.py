@@ -1702,9 +1702,13 @@ class DistillationMemory(MemoryDataset):
         return data
 
 
-def get_train_datalist(dataset, sigma, repeat, init_cls, rnd_seed):
-    with open(f"collections/{dataset}/{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
-        train_list = json.load(fp)
+def get_train_datalist(dataset, sigma, repeat, init_cls, rnd_seed, mode):
+    if mode=='remind':
+        with open(f"collections/{dataset}/F_{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
+            train_list = json.load(fp)
+    else:
+        with open(f"collections/{dataset}/{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
+            train_list = json.load(fp)
     return train_list['stream'], train_list['cls_dict'], train_list['cls_addition']
 
 def get_test_datalist(dataset) -> List:
@@ -1715,6 +1719,10 @@ def get_test_datalist(dataset) -> List:
         print("test name", f"collections/{dataset}/{dataset}_val2.json")
         return pd.read_json(f"collections/{dataset}/{dataset}_val2.json").to_dict(orient="records")
 
+def get_train_baseinit_datalist(dataset, sigma, repeat, init_cls, rnd_seed):
+    with open(f"collections/{dataset}/G_{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
+        train_list = json.load(fp)
+    return train_list['stream'], train_list['cls_dict']
 
 def get_statistics(dataset: str):
     """

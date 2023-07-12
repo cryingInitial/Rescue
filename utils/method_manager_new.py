@@ -21,6 +21,7 @@ from methods.etf_er_resmem_ver5 import ETF_ER_RESMEM_VER5
 from methods.etf_er_initial import ETF_ER_INITIAL
 from methods.etf_er_resmem import ETF_ER_RESMEM
 from methods.baseline_new_joint import BASELINE_JOINT
+from methods.remind_new import REMIND
 logger = logging.getLogger()
 
 
@@ -148,6 +149,13 @@ def select_method(args, train_datalist, test_datalist, device):
         )
     elif args.mode == "ewc":
         method = EWCpp(
+            train_datalist=train_datalist,
+            test_datalist=test_datalist,
+            device=device,
+            **kwargs,
+        )
+    elif args.mode == "remind":        
+        method = REMIND(
             train_datalist=train_datalist,
             test_datalist=test_datalist,
             device=device,

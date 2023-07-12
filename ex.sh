@@ -1,18 +1,18 @@
 #/bin/bash
 
 # CIL CONFIG
-NOTE="etf_er_resmem_ver10_sigma10_cifar10_non_distill_non_residual_coeff_0.01"
+NOTE="remind_sigma0_pretrained_debug_seed1_batchnormal"
 #"etf_er_resmem_ver3_non_distill_not_pre_trained_sigma10_real_cifar10_iter_1_knn_sigma_0.7_top_k_3_softmax_temp_1.0_loss_ce"
 #"etf_er_resmem_ver3_distill_not_pre_trained_sigma10_real_cifar10_iter_1_knn_sigma_0.7_distill_coeff_0.99_distill_beta_0.1_top_k_3_softmax_temp_1.0_loss_ce_classwise_difference_ver2_threshold_0.5"
 #"etf_er_resmem_not_pre_trained_sigma0_cifar10_iter_1_loss_dr_temp1_knn_sigma0.7_softmax_top_k5_residual_num20"
 #"etf_er_resmem_not_pre_trained_sigma0_cifar10_iter_1_loss_dr_temp1_knn_sigma0.7_softmax_top_k3_residual_num20" # Short description of the experiment. (WARNING: logs/results with the same note will be overwritten!)
-MODE="etf_er_resmem_ver5"
+MODE="remind"
 K_COEFF="4"
 TEMPERATURE="0.125"
 TRANSFORM_ON_GPU="--transform_on_gpu"
 #TRANSFORM_ON_GPU=""
-N_WORKER=2
-FUTURE_STEPS=3
+N_WORKER=1
+FUTURE_STEPS=1
 EVAL_N_WORKER=2
 EVAL_BATCH_SIZE=1000
 #USE_KORNIA="--use_kornia"
@@ -29,7 +29,7 @@ RESIDUAL_NUM_THRESHOLD=10
 CURRENT_FEATURE_NUM=50
 DATASET="cifar10" # cifar10, cifar100, tinyimagenet, imagenet
 ONLINE_ITER=1
-SIGMA=10
+SIGMA=0
 REPEAT=1
 INIT_CLS=100
 USE_AMP="--use_amp"
@@ -74,18 +74,22 @@ REGULARIZATION=""
 
 
 if [ "$DATASET" == "cifar10" ]; then
-    MEM_SIZE=500
+    # MEM_SIZE=500
+    MEM_SIZE=980
     N_SMP_CLS="9" K="3" MIR_CANDS=50
     CANDIDATE_SIZE=50 VAL_SIZE=5
     MODEL_NAME="resnet18" VAL_PERIOD=500 EVAL_PERIOD=100
     BATCHSIZE=16; LR=3e-4 OPT_NAME="adam" SCHED_NAME="default" IMP_UPDATE_PERIOD=1
+    BASEINITCLS_NUM=2
 
 elif [ "$DATASET" == "cifar100" ]; then
-    MEM_SIZE=2000
+    # MEM_SIZE=2000
+    MEM_SIZE=39170
     N_SMP_CLS="2" K="3" MIR_CANDS=50
     CANDIDATE_SIZE=100 VAL_SIZE=2
     MODEL_NAME="resnet18" VAL_PERIOD=500 EVAL_PERIOD=100 
-    BATCHSIZE=16; LR=3e-4 OPT_NAME="adam" SCHED_NAME="default" IMP_UPDATE_PERIOD=1
+    BATCHSIZE=16; LR=3e-4 OPT_NAME="sgd" SCHED_NAME="default" IMP_UPDATE_PERIOD=1
+    BASEINITCLS_NUM=10
 
 elif [ "$DATASET" == "tinyimagenet" ]; then
     MEM_SIZE=100000

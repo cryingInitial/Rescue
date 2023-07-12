@@ -26,7 +26,7 @@ writer = SummaryWriter("tensorboard")
 
 class CLManagerBase:
     def __init__(self, train_datalist, test_datalist, device, **kwargs):
-
+       
         self.device = device
         self.writer = SummaryWriter(f'tensorboard/{kwargs["dataset"]}/{kwargs["note"]}/seed_{kwargs["rnd_seed"]}')
         self.method_name = kwargs["mode"]
@@ -47,10 +47,13 @@ class CLManagerBase:
             self.sched_name = 'const'
         self.lr = kwargs["lr"]
         self.real_num_classes = kwargs["num_class"]
-        assert kwargs["temp_batchsize"] <= kwargs["batchsize"]
-        self.batch_size = kwargs["batchsize"]
-        self.temp_batch_size = kwargs["temp_batchsize"]
-        self.memory_batch_size = self.batch_size - self.temp_batch_size
+        # assert kwargs["temp_batchsize"] <= kwargs["batchsize"]
+        # self.batch_size = kwargs["batchsize"]
+        # self.temp_batch_size = kwargs["temp_batchsize"]
+        # self.memory_batch_size = self.batch_size - self.temp_batch_size
+        self.batch_size = 21
+        self.temp_batch_size = 8
+        self.memory_batch_size = 20
         self.memory_size -= self.temp_batch_size
         self.transforms = kwargs["transforms"]
 
@@ -78,13 +81,14 @@ class CLManagerBase:
         self.cls_dict = {}
         self.total_samples = len(self.train_datalist)
         
-        self.train_transform, self.test_transform, self.cpu_transform, self.n_classes = get_transform(self.dataset, self.transforms, self.transform_on_gpu)
+        self.train_transform, self.test_transform, self.cpu_transform, self.test_gpu_transform, self.n_classes = get_transform(self.dataset, self.transforms, self.transform_on_gpu)
         self.cutmix = "cutmix" in kwargs["transforms"]
 
         self.model = select_model(self.model_name, self.dataset, 1,).to(self.device)
         # self.model = select_model(self.model_name, self.dataset, 1, pre_trained=True).to(self.device)
         print("model")
         print(self.model)
+        self.rnd_seed = kwargs['rnd_seed']
         self.optimizer = select_optimizer(self.opt_name, self.lr, self.model)
         self.scheduler = select_scheduler(self.sched_name, self.optimizer)
 
@@ -105,7 +109,6 @@ class CLManagerBase:
         self.num_learning_class = 1
         self.exposed_classes = []
         self.seen = 0
-
         self.future_sample_num = 0
         self.future_sampling = True
         self.future_retrieval = True
@@ -117,7 +120,7 @@ class CLManagerBase:
         self.knowledge_gain_rate = []
         self.forgetting_time = []
         self.note = kwargs['note']
-        self.rnd_seed = kwargs['rnd_seed']
+        
         self.save_path = f'results/{self.dataset}/{self.note}/seed_{self.rnd_seed}'
         self.f_period = kwargs['f_period']
         self.f_next_time = 0
@@ -154,12 +157,13 @@ class CLManagerBase:
         self.train_count = 0
         self.num_learned_class = 0
         self.num_learning_class = 1
+        
         self.exposed_classes = []
         self.seen = 0
         self.future_sample_num = 0
         self.future_sampling = True
         self.future_retrieval = True
-
+            
         self.waiting_batch = []
         # 미리 future step만큼의 batch를 load
         for i in range(self.future_steps):
@@ -408,8 +412,8 @@ class CLManagerBase:
             return logit, loss
 
     def report_training(self, sample_num, train_loss, train_acc):
-        #writer.add_scalar(f"train/loss", train_loss, sample_num)
-        #writer.add_scalar(f"train/acc", train_acc, sample_num)
+        self.writer.add_scalar(f"train/loss", train_loss, sample_num)
+        self.writer.add_scalar(f"train/acc", train_acc, sample_num)
         logger.info(
             f"Train | Sample # {sample_num} | train_loss {train_loss:.4f} | train_acc {train_acc:.4f} | TFLOPs {self.total_flops/1000:.2f} | "
             f"running_time {datetime.timedelta(seconds=int(time.time() - self.start_time))} | "
@@ -419,8 +423,8 @@ class CLManagerBase:
     def report_test(self, sample_num, avg_loss, avg_acc, cls_acc):
         print("cls_acc")
         print(cls_acc)
-        #writer.add_scalar(f"test/loss", avg_loss, sample_num)
-        #writer.add_scalar(f"test/acc", avg_acc, sample_num)
+        self.writer.add_scalar(f"test/loss", avg_loss, sample_num)
+        self.writer.add_scalar(f"test/acc", avg_acc, sample_num)
         logger.info(
             f"Test | Sample # {sample_num} | test_loss {avg_loss:.4f} | test_acc {avg_acc:.4f} | TFLOPs {self.total_flops/1000:.2f}"
         )

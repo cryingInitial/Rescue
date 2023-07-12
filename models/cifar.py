@@ -16,12 +16,7 @@ model_urls = {
     'wide_resnet101_2': 'https://download.pytorch.org/models/wide_resnet101_2-32ee1156.pth',
 }
 
-model_files = {
-    'cifar10': '',
-    'cifar100': 'cifar100_cls10_REMIND.pt',
-    'tinyimagenet': '',
-    'imagenet': '',
-}
+
 
 def safe_load_dict(model, new_model_state, should_resume_all_params=False):
     old_model_state = model.state_dict()
@@ -204,19 +199,17 @@ class Bottleneck(nn.Module):
         return out
 
 def _resnet(arch, block, layers, pretrained, progress, dataset=False, G=False, F=False, **kwargs):
+    
+    if G:
+        model = ResNet_G(block, layers, **kwargs)
+        return model
+    elif F:
+        model = ResNet_F(block, layers, **kwargs)
+        return model
+    
     model = ResNet(block, layers, **kwargs)
 
     if pretrained:
-        if G:
-            model = ResNet_G(block, layers, **kwargs)
-            resumed = torch.load(model_files[dataset])
-            safe_load_dict(model, resumed['state_dict'], should_resume_all_params=True)
-            return model
-        elif F:
-            model = ResNet_F(block, layers, **kwargs)
-            resumed = torch.load(model_files[dataset])
-            safe_load_dict(model, resumed['state_dict'], should_resume_all_params=True)
-            return model
         
         state_dict = load_state_dict_from_url(model_urls[arch],
                                               progress=progress)
@@ -357,39 +350,17 @@ class ResNet(nn.Module):
             return out, features
         else:
             return out
-    
-    def _forward_F(self, x):
-        out0 = self.layer4[1](x)
-        out1 = self.avgpool(out0)
-        feature = torch.flatten(out1, 1)
-        out = self.fc(feature)
-        return out
 
-    def _forward_G(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        out0 = self.maxpool(x)
-        out1 = self.layer1(out0)
-        out2 = self.layer2(out1)
-        out3 = self.layer3(out2)
-        out4 = self.layer4[0](out3)
-        feature = torch.flatten(out4, 1)
-        out = self.fc(feature)
-        return out
-
-    def forward(self, x, get_feature=False, get_features=False, F=None, G=None):
-        if F:
-            return self._forward_F(x) # last 
-        elif G:
-            return self._forward_G(x)
-        else:
-            return self._forward_impl(x, get_feature, get_features)
+    def forward(self, x, get_feature=False, get_features=False):
+        return self._forward_impl(x, get_feature, get_features)
 
 class ResNet_G(ResNet):
     def __init__(self, block, layers):
-        super(ResNet,self).__init__(block, layers)
-        del self.layer4[1]
+        super().__init__(block, layers)
+        # del self.layer4[1]
+        # del self.avgpool
+        # del self.flatten
+        # del self.fc
 
     def forward(self, x):
         x = self.conv1(x)
@@ -400,15 +371,15 @@ class ResNet_G(ResNet):
         out2 = self.layer2(out1)
         out3 = self.layer3(out2)
         out4 = self.layer4[0](out3)
-        feature = torch.flatten(out4, 1)
-        out = self.fc(feature)
-        return out
+        return out4
     
 class ResNet_F(ResNet):
     def __init__(self, block, layers):
-        super(ResNet,self).__init__(block, layers)
+        super().__init__(block, layers)
+        # del self.conv1, self.bn1, self.relu, self.maxpool, self.layer1, self.layer2, self.layer3, self.layer4[0]
 
     def forward(self, x):
+        # out0 = self.layer4(x)
         out0 = self.layer4[1](x)
         out1 = self.avgpool(out0)
         feature = torch.flatten(out1, 1)
