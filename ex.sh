@@ -1,8 +1,8 @@
 #/bin/bash
 
 # CIL CONFIG
-NOTE="etf_er_resmem_ver3_future_check_sigma10"
-MODE="etf_er_resmem_ver3"
+NOTE="twf_debug"
+MODE="twf"
 
 K_COEFF="4"
 TEMPERATURE="0.125"

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 from utils.torch_utils import load_state_dict_from_url 
-from mmcv.cnn import build_norm_layer
+# from mmcv.cnn import build_norm_layer
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -61,6 +61,7 @@ def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
+'''
 class MLPFFNNeck(nn.Module):
     def __init__(self, in_channels=512, out_channels=512):
         super().__init__()
@@ -102,7 +103,7 @@ class MLPFFNNeck(nn.Module):
         x = self.ln3(x)
         x = x + self.ffn(identity)
         return x
-
+'''
 class BasicBlock(nn.Module):
     expansion = 1
 

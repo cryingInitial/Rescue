@@ -44,6 +44,9 @@ class REMIND(CLManagerBase):
         self.baseinit_epochs = kwargs['baseinit_epochs']
         self.spatial_feat_dim = kwargs['spatial_feat_dim']
         self.remind_memory_size = kwargs['remind_memsize']
+        
+        self.remind_batch_size = kwargs['remind_batch_size']
+        self.remind_memretrieval = kwargs['remind_memretrieval']
         self.baseinit_datalist, self.baseinit_classnames = get_train_baseinit_datalist(self.dataset, self.sigma, self.repeat, self.init_cls, self.rnd_seed)
         
         self.random_resize_crop = RandomResizeCrop(7, scale=(2 / 7, 1.0))
@@ -51,6 +54,9 @@ class REMIND(CLManagerBase):
         super().__init__(train_datalist, test_datalist, device, **kwargs)
 
     def initialize_future(self):
+        self.batch_size = self.remind_batch_size
+        self.memory_batch_size = self.remind_memretrieval
+        
         self.memory = REMINDMemory(self.remind_memory_size, self.device)
         print("Begin Base_initialization")
         self.base_initialize()
@@ -122,8 +128,9 @@ class REMIND(CLManagerBase):
             transforms.ToTensor(),
             transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
         ])
+        # return 0,0
 
-        self.model = select_model(self.model_name, self.dataset, 1).to(self.device)
+        self.model = select_model(self.model_name, self.dataset, pre_trained=True).to(self.device)
         self.model.fc = nn.Linear(self.model.fc.in_features, self.baseinit_nclasses).to(self.device)
         self.model.to(self.device)
         self.optimizer = select_optimizer(self.opt_name, 0.001, self.model)
@@ -213,6 +220,10 @@ class REMIND(CLManagerBase):
         train_acc, test_acc = self.pretrain()
         print('Training accuracy: {:.2f}%'.format(float(train_acc)))
         print('Test accuracy: {:.2f}%\n'.format(float(test_acc)))
+        
+        # self.model = select_model(self.model_name, self.dataset, 1, G=True).to(self.device)
+        # self.model.fc = nn.Linear(self.model.fc.in_features, self.baseinit_nclasses).to(self.device)
+        # self.model.load_state_dict(torch.load('cifar10_cls2_REMIND_sigma0_seed1_pretrained.pt'))
         
         self.model_G = select_model(self.model_name, self.dataset, 1, G=True).to(self.device)
         self.model_F = select_model(self.model_name, self.dataset, 1, F=True).to(self.device)
@@ -332,11 +343,11 @@ class REMIND(CLManagerBase):
                 #     ongoing_class = y
                 #     self.optimizer.param_groups[0]['lr'] = self.lr_per_class[int(y)]
                     
-                memory_data = self.memory.retrieval(self.memory_batch_size)
+                memory_data = self.memory.retrieval(self.memory_batch_size*2)
                 data_codes = np.empty(
-                            ((1 + self.memory_batch_size), self.spatial_feat_dim, self.spatial_feat_dim, self.n_codebooks),
+                            ((1 + self.memory_batch_size*2), self.spatial_feat_dim, self.spatial_feat_dim, self.n_codebooks),
                             dtype=np.uint8)
-                data_labels = torch.empty((1 + self.memory_batch_size), dtype=torch.long).to(self.device)
+                data_labels = torch.empty((1 + self.memory_batch_size*2), dtype=torch.long).to(self.device)
                 
                 data_codes[0] = x
                 data_labels[0] = y.long()
@@ -347,7 +358,7 @@ class REMIND(CLManagerBase):
                     
                 # Reconstruct
                 data_codes = np.reshape(
-                    data_codes, ((1 + self.memory_batch_size) * self.spatial_feat_dim * self.spatial_feat_dim, self.n_codebooks))
+                    data_codes, ((1 + self.memory_batch_size*2) * self.spatial_feat_dim * self.spatial_feat_dim, self.n_codebooks))
                 data_batch_reconstructed = self.pq.decode(data_codes)
                 data_batch_reconstructed = np.reshape(
                     data_batch_reconstructed,(-1, self.spatial_feat_dim, self.spatial_feat_dim, self.num_channels))
@@ -355,36 +366,35 @@ class REMIND(CLManagerBase):
                     np.transpose(data_batch_reconstructed, (0, 3, 1, 2))).to(self.device)
                 
                 # resize crop augmentation
-                # transform_data_batch = torch.empty_like(data_batch_reconstructed)
-                # for tens_ix, tens in enumerate(data_batch_reconstructed):
-                #     transform_data_batch[tens_ix] = self.random_resize_crop(tens)
-                # data_batch_reconstructed = transform_data_batch
+                transform_data_batch = torch.empty_like(data_batch_reconstructed)
+                for tens_ix, tens in enumerate(data_batch_reconstructed):
+                    transform_data_batch[tens_ix] = self.random_resize_crop(tens)
+                data_batch_reconstructed = transform_data_batch
                 
                 # mixup
-                # x_prev_mixed, prev_labels_a, prev_labels_b, lam = self.mixup_data(
-                #     data_batch_reconstructed[1:1 + self.memory_batch_size],
-                #     data_labels[1:1 + self.memory_batch_size],
-                #     data_batch_reconstructed[1 + self.memory_batch_size:],
-                #     data_labels[1 + self.memory_batch_size:],
-                #     alpha=self.mixup_alpha)
+                x_prev_mixed, prev_labels_a, prev_labels_b, lam = self.mixup_data(
+                    data_batch_reconstructed[1:1 + self.memory_batch_size],
+                    data_labels[1:1 + self.memory_batch_size],
+                    data_batch_reconstructed[1 + self.memory_batch_size:],
+                    data_labels[1 + self.memory_batch_size:],
+                    alpha=self.mixup_alpha)
                 
-                # data = torch.empty((1+self.memory_batch_size, self.num_channels, self.spatial_feat_dim, self.spatial_feat_dim))
-                # labels_a = torch.zeros(self.memory_batch_size + 1).long()
-                # labels_b = torch.zeros(self.memory_batch_size + 1).long()
-                # data[0] = data_batch_reconstructed[0]
-                # labels_a[0] = y.squeeze()
-                # labels_b[0] = y.squeeze()
-                # data[1:] = x_prev_mixed.clone()
-                # labels_a[1:] = prev_labels_a
-                # labels_b[1:] = prev_labels_b
+                data = torch.empty((1+self.memory_batch_size, self.num_channels, self.spatial_feat_dim, self.spatial_feat_dim))
+                labels_a = torch.zeros(self.memory_batch_size + 1).long()
+                labels_b = torch.zeros(self.memory_batch_size + 1).long()
+                data[0] = data_batch_reconstructed[0]
+                labels_a[0] = y.squeeze()
+                labels_b[0] = y.squeeze()
+                data[1:] = x_prev_mixed.clone()
+                labels_a[1:] = prev_labels_a
+                labels_b[1:] = prev_labels_b
                 
                 # fit on replay and new sample
                 self.optimizer.zero_grad()
-                # data = data.to(self.device)
-                output = self.model_F(data_batch_reconstructed)
-                loss = self.criterion(output, data_labels)
-                # output, loss = self.model_forward(data_batch_reconstructed, data_labels, input_idxs)
-                # loss = self.mixup_criterion(self.criterion, output, labels_a.to(self.device), labels_b.to(self.device), lam)
+                data = data.to(self.device)
+                output = self.model_F(data)
+                # loss = self.criterion(output, data_labels)
+                loss = self.mixup_criterion(self.criterion, output, labels_a.to(self.device), labels_b.to(self.device), lam)
                 _, preds = output.topk(self.topk, 1, True, True)
                 preds = preds.detach().cpu()
                 data_labels = data_labels.detach().cpu()
@@ -402,12 +412,12 @@ class REMIND(CLManagerBase):
                 self.after_model_update()
                 
                 total_loss += loss.item()
-                correct += torch.sum(preds == data_labels.unsqueeze(1)).item()
-                num_data += data_labels.size(0)
-                # correct += torch.sum(preds == labels_a.unsqueeze(1)).item()
-                # correct += torch.sum(preds == labels_b.unsqueeze(1)).item()
-                # num_data += labels_a.size(0)
-                # num_data += labels_b.size(0)
+                # correct += torch.sum(preds == data_labels.unsqueeze(1)).item()
+                # num_data += data_labels.size(0)
+                correct += torch.sum(preds == labels_a.unsqueeze(1)).item()
+                correct += torch.sum(preds == labels_b.unsqueeze(1)).item()
+                num_data += labels_a.size(0)
+                num_data += labels_b.size(0)
                 # if self.lr_scheduler_per_class is not None:
                 #     self.lr_scheduler_per_class[int(y)].step()
                 #     self.lr_per_class[int(y)] = self.optimizer.param_groups[0]['lr']
@@ -426,6 +436,78 @@ class REMIND(CLManagerBase):
     def mixup_criterion(self, criterion, pred, y_a, y_b, lam):
         return lam * criterion(pred, y_a.squeeze()) + (1 - lam) * criterion(pred, y_b.squeeze())
 
+    
+    def online_evaluate(self, test_list, sample_num, batch_size, n_worker, cls_dict, cls_addition, cls_order, future_train_dict, data_time):
+        if self.added:
+            test_df = pd.DataFrame(test_list)
+            exp_test_df = test_df[test_df['klass'].isin(self.exposed_classes)]
+            print("exp_test_df", len(exp_test_df))
+            test_dataset = ImageDataset(
+                exp_test_df,
+                dataset=self.dataset,
+                transform=self.test_transform,
+                cls_list=self.exposed_classes,
+                data_dir=self.data_dir
+            )
+            self.test_loader = DataLoader(
+                test_dataset,
+                shuffle=True,
+                batch_size=batch_size,
+                num_workers=n_worker,
+            )
+            
+            if self.use_future_eval:
+                if len(cls_order) - len(self.exposed_classes) <= self.num_future_class:
+                    self.future_train_loader = None
+                    self.future_test_loader = None
+                    
+                else:
+                    future_test_cls = cls_order[len(self.exposed_classes) : len(self.exposed_classes) + self.num_future_class]
+                    ### make future_train_loader ###
+                    future_train_list = []
+                    for test_cls in future_test_cls:
+                        future_train_list.extend(future_train_dict[test_cls])
+                    
+                    future_train_dataset = ImageDataset(
+                        pd.DataFrame(future_train_list),
+                        dataset=self.dataset,
+                        transform=self.future_train_transform,
+                        cls_list=self.exposed_classes+future_test_cls,
+                        data_dir=self.data_dir
+                    )
+                    self.future_train_loader = DataLoader(
+                        future_train_dataset,
+                        shuffle=True,
+                        batch_size=batch_size,
+                        num_workers=n_worker,
+                    )
+                    
+                    ### make future_test_loader ###
+                    future_test_df = pd.DataFrame(test_list)
+                    exp_future_test_df = future_test_df[future_test_df['klass'].isin(future_test_cls)]
+                    print("exp_future_test_df", len(exp_future_test_df))
+                    future_test_dataset = ImageDataset(
+                        exp_future_test_df,
+                        dataset=self.dataset,
+                        transform=self.test_transform,
+                        cls_list=self.exposed_classes + future_test_cls,
+                        data_dir=self.data_dir
+                    )
+                    self.future_test_loader = DataLoader(
+                        future_test_dataset,
+                        shuffle=True,
+                        batch_size=batch_size,
+                        num_workers=n_worker,
+                    )
+
+                    future_eval_dict = self.future_evaluation()
+                    self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])              
+                    
+        eval_dict = self.evaluation(self.test_loader, self.criterion)
+        self.report_test(sample_num, eval_dict["avg_loss"], eval_dict["avg_acc"], eval_dict["cls_acc"])
+        
+        self.added = False
+        return eval_dict
     
     def evaluation(self, test_loader, criterion):
         total_correct, total_num_data, total_loss = 0.0, 0.0, 0.0
@@ -535,6 +617,8 @@ class REMINDMemory(MemoryBase):
     def __init__(self, memory_size, device, ood_strategy=None):
         self.latent_dict = {}
         self.rehearsal_ixs = []
+        self.eval_images = []
+        self.eval_labels = []
 
         super().__init__(memory_size, device, ood_strategy=None)
 

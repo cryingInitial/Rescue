@@ -252,9 +252,11 @@ def base_parser():
     parser.add_argument('--n_codebooks', type=int, default=32, help='# of codebooks')
     parser.add_argument('--mixup_alpha', type=float, default=0.1, help='parameter for replay sample mixup')
     parser.add_argument('--baseinit_nclasses', type=int, default=2, help='# epochs for baseinit')
-    parser.add_argument('--baseinit_epochs', type=int, default=40, help='# epochs for baseinit')
+    parser.add_argument('--baseinit_epochs', type=int, default=30, help='# epochs for baseinit')
     parser.add_argument('--spatial_feat_dim', type=int, default=7, help='dimension of G model output')
     parser.add_argument('--remind_memsize', type=int, default=980, help='# epochs for baseinit')
+    parser.add_argument('--remind_batch_size', type=int, default=21, help='# epochs for baseinit')
+    parser.add_argument('--remind_memretrieval', type=int, default=20, help='# epochs for baseinit')
 
 
     args = parser.parse_args()

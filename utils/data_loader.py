@@ -240,7 +240,7 @@ def partial_distill_loss(model, net_partial_features: list, pret_partial_feature
             curr_ext_attention_map = torch.stack(
                 [b[i] for b in extern_attention_maps], dim=0).float()
         adapt_loss, adapt_attention = adapter(net_feat, pret_feat, targets, task_ids,
-                                              teacher_forcing=curr_teacher_forcing, attention_map=curr_ext_attention_map)
+                                              teacher_forcing=curr_teacher_forcing, attention_map=curr_ext_attention_map, )
 
         loss += adapt_loss
         attention_maps.append(adapt_attention.detach().cpu().clone().data)
