@@ -84,7 +84,8 @@ class CLManagerBase:
         self.train_transform, self.test_transform, self.cpu_transform, self.test_gpu_transform, self.future_train_transform, self.n_classes = get_transform(self.dataset, self.transforms, self.transform_on_gpu)
         self.cutmix = "cutmix" in kwargs["transforms"]
 
-        self.model = select_model(self.model_name, self.dataset, pre_trained=True ).to(self.device)
+        #self.model = select_model(self.model_name, self.dataset, pre_trained=True ).to(self.device)
+        self.model = select_model(self.model_name, self.dataset, 1,).to(self.device)
         print("model")
         print(self.model)
         self.rnd_seed = kwargs['rnd_seed']
@@ -819,6 +820,8 @@ class CLManagerBase:
         for name, param in temp_model.named_parameters():
             if 'fc' not in name:
                 param.requires_grad = False
+            else:
+                print("name", name)
         
         for i in range(self.future_training_iterations):
             for i, data in enumerate(self.future_train_loader):
@@ -827,11 +830,18 @@ class CLManagerBase:
                 
                 temp_optimizer.zero_grad()
 
+                
                 # logit can not be used anymore
                 with torch.cuda.amp.autocast(self.use_amp):
                     logit, feature = temp_model(x, get_feature=True)
                     loss = self.criterion(logit, y)
                 
+                for name, param in temp_model.named_parameters():
+                    if 'fc' not in name:
+                        param.requires_grad = False
+                    else:
+                        print("before name", name, param[:5])
+
                 if self.use_amp:
                     self.scaler.scale(loss).backward()
                     self.scaler.step(temp_optimizer)
@@ -839,6 +849,12 @@ class CLManagerBase:
                 else:
                     loss.backward()
                     temp_optimizer.step()
+
+                for name, param in temp_model.named_parameters():
+                    if 'fc' not in name:
+                        param.requires_grad = False
+                    else:
+                        print("after name", name, param[:5])
 
         # for calculating forward transfer
         for i, data in enumerate(self.future_test_loader):
