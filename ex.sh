@@ -1,18 +1,13 @@
 #/bin/bash
 
 # CIL CONFIG
-NOTE="etf_er_resmem_ver8_sigma10_within"
-MODE="etf_er_resmem_ver8"
+NOTE="ocs_er"
+MODE="ocs"
 K_COEFF="4"
 TEMPERATURE="0.125"
 TRANSFORM_ON_GPU="--transform_on_gpu"
 #TRANSFORM_ON_GPU=""
-<<<<<<< HEAD
-
-N_WORKER=2
-=======
 N_WORKER=1
->>>>>>> db57c4ba7fe58649ca90ca68a76aa8577acd04ae
 FUTURE_STEPS=4
 
 EVAL_N_WORKER=2
