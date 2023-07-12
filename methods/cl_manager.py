@@ -820,8 +820,6 @@ class CLManagerBase:
         for name, param in temp_model.named_parameters():
             if 'fc' not in name:
                 param.requires_grad = False
-            else:
-                print("name", name)
         
         for i in range(self.future_training_iterations):
             for i, data in enumerate(self.future_train_loader):
