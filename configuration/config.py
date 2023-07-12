@@ -250,6 +250,9 @@ def base_parser():
     # REMIND
     parser.add_argument('--codebook_size', type=int, default=256, help='size of codebook for REMIND memory')
     parser.add_argument('--n_codebooks', type=int, default=32, help='# of codebooks')
+    parser.add_argument('--mixup_alpha', type=float, default=0.1, help='parameter for replay sample mixup')
+    parser.add_argument('--baseinit_epochs', type=int, default=40, help='# epochs for baseinit')
+    parser.add_argument('--spatial_feat_dim', type=int, default=7, help='dimension of G model output')
 
 
     args = parser.parse_args()

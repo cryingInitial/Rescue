@@ -276,8 +276,6 @@ class TWF(ER):
         
             # labels = y[:self.temp_batch_size]
             
-            self.optimizer.zero_grad()
-            
             # loss = self.loss(stream_logit[:, self.future_task_id*self.cpt:(self.future_task_id+1)*self.cpt], labels % self.cpt)
             # stream_y = stream_y.to(self.device)
             loss_er = torch.tensor(0.)
