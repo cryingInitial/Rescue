@@ -286,6 +286,7 @@ class CLManagerBase:
                     feature_dict[u_y].append(torch.index_select(features, 0, indices))
             self.check_neural_collapse(feature_dict, fc_weight)
 
+    '''
     def save_features(self, feature_pickle_name, class_pickle_name):
         feature_dict = {}
         with torch.no_grad():
@@ -322,7 +323,7 @@ class CLManagerBase:
         
         with open(class_pickle_name, 'wb') as f:
             pickle.dump(self.cls_dict, f, pickle.HIGHEST_PROTOCOL)        
-
+    '''
 
     def online_train(self, iterations=1):
         total_loss, correct, num_data = 0.0, 0.0, 0.0

@@ -322,36 +322,6 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             self.report_training(sample_num, train_loss, train_acc)
             self.num_updates -= int(self.num_updates)
             self.update_schedule()
-
-        # save feature and etf-fc
-        if self.store_pickle and self.rnd_seed == 1:
-            if self.sample_num % 100 == 0 and self.sample_num !=0:
-
-                name_prefix = self.note + "/etf_resmem_sigma" + str(self.sigma) + "_num_" + str(self.sample_num) + "_iter" + str(self.online_iter) + "_sigma" + str(self.softmax_temperature) + "_criterion_" + self.select_criterion + "_top_k" + str(self.knn_top_k) + "_knn_sigma"+ str(self.knn_sigma)
-                fc_pickle_name = name_prefix + "_fc.pickle"
-                feature_pickle_name = name_prefix + "_feature.pickle"
-                class_pickle_name = name_prefix + "_class.pickle"
-                pickle_name_feature_std_mean_list = name_prefix + "_feature_std.pickle"
-                pickle_name_stds_list = name_prefix + "_stds.pickle"
-
-                self.save_features(feature_pickle_name, class_pickle_name)
-
-                with open(fc_pickle_name, 'wb') as f:
-                    '''
-                    num_leanred_class = len(self.memory.cls_list)
-                    index = []
-                    for i in range(4):
-                        #inf_index += list(range(i * real_num_class, i * real_num_class + real_entered_num_class))
-                        index += list(range(i * self.real_num_classes + num_leanred_class, min((i+1) * self.real_num_classes, self.num_classes)))
-                    pickle.dump(self.etf_vec[:, index].T, f, pickle.HIGHEST_PROTOCOL)
-                    '''
-                    pickle.dump(self.etf_vec[:, :len(self.memory.cls_list)].T, f, pickle.HIGHEST_PROTOCOL)
-
-                with open(pickle_name_feature_std_mean_list, 'wb') as f:
-                    pickle.dump(self.feature_std_mean_list, f, pickle.HIGHEST_PROTOCOL)
-                
-                with open(pickle_name_stds_list, 'wb') as f:
-                    pickle.dump(self.stds_list, f, pickle.HIGHEST_PROTOCOL)
                 
         
 
@@ -565,7 +535,10 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 print("prob")
                 print(prob)
             '''
-                
+        
+        test_feature_dict = defaultdict(list) #torch.zeros(1, self.model.fc.in_features).to(self.device)
+        test_residual_dict = defaultdict(list) #torch.zeros(self.model.fc.in_features).to(self.device)
+        
         with torch.no_grad():
             rand_num = torch.rand(1).to(self.device)
             for i, data in enumerate(test_loader):
@@ -577,6 +550,11 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 _, features = self.model(x, get_feature=True)
                 features = self.pre_logits(features)
 
+                ### feature dict store ###                
+                for label in torch.unique(y):
+                    index = (y==label).nonzero(as_tuple=True)[0]
+                    test_feature_dict[label.item()].extend(features.detach()[index])
+                    
                 if self.use_residual:
                     # |z-z(i)|**2
                     w_i_lists = -torch.norm(features.view(-1, 1, features.shape[1]) - feature_list, p=2, dim=2)
@@ -599,7 +577,12 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                         print("mask", (mask==1).sum())
                         residual_terms *= mask.unsqueeze(1)
                     features += residual_terms
-                        
+                    
+                    ### residual dict store ###
+                    for label in torch.unique(y):
+                        index = (y==label).nonzero(as_tuple=True)[0]
+                        test_residual_dict[label.item()].extend(residual_terms.detach()[index])
+                    
                 if self.loss_criterion == "DR":
                     target = self.etf_vec[:, y].t()
                     loss = self.criterion(features, target)
@@ -626,5 +609,31 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         avg_loss = total_loss / len(test_loader)
         cls_acc = (correct_l / (num_data_l + 1e-5)).cpu().numpy().tolist()
         ret = {"avg_loss": avg_loss, "avg_acc": avg_acc, "cls_acc": cls_acc}
-
+        self.save_pickles(test_feature_dict, test_residual_dict)
         return ret
+
+
+    def save_pickles(self, test_feature_dict, test_residual_dict):
+        ### save feature and etf-fc
+        if self.store_pickle and self.rnd_seed == 1:
+            name_prefix = self.note + "/etf_resmem_sigma" + str(self.sigma) + "_num_" + str(self.sample_num) + "_iter" + str(self.online_iter) + "_sigma" + str(self.softmax_temperature) + "_criterion_" + self.select_criterion + "_top_k" + str(self.knn_top_k) + "_knn_sigma"+ str(self.knn_sigma)
+            fc_pickle_name = name_prefix + "_fc.pickle"
+            feature_pickle_name = name_prefix + "_feature.pickle"
+            class_pickle_name = name_prefix + "_class.pickle"
+            residual_pickle_name = name_prefix + "_residual.pickle"
+            
+            #self.save_features(feature_pickle_name, class_pickle_name)
+
+            with open(fc_pickle_name, 'wb') as f:
+                pickle.dump(self.etf_vec[:, :len(self.memory.cls_list)].T, f, pickle.HIGHEST_PROTOCOL)
+
+            with open(feature_pickle_name, 'wb') as f:
+                pickle.dump(test_feature_dict, f, pickle.HIGHEST_PROTOCOL)
+            
+            with open(class_pickle_name, 'wb') as f:
+                pickle.dump(self.cls_dict, f, pickle.HIGHEST_PROTOCOL)     
+            
+            if self.use_residual:
+                with open(residual_pickle_name, 'wb') as f:
+                    pickle.dump(test_residual_dict, f, pickle.HIGHEST_PROTOCOL)
+        
