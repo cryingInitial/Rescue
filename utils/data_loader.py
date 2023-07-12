@@ -172,8 +172,47 @@ def get_custom_double_transform(transform):
         else:
             tfs.append(DoubleTransform(tf))
 
-def partial_distill_loss(model, net_partial_features: list, pret_partial_features: list,
-                         targets, device, teacher_forcing: list = None, extern_attention_maps: list = None):
+# def partial_distill_loss(model, net_partial_features: list, pret_partial_features: list,
+#                          targets, task_ids, device, teacher_forcing: list = None, extern_attention_maps: list = None):
+
+#     assert len(net_partial_features) == len(
+#         pret_partial_features), f"{len(net_partial_features)} - {len(pret_partial_features)}"
+
+#     if teacher_forcing is None or extern_attention_maps is None:
+#         assert teacher_forcing is None
+#         assert extern_attention_maps is None
+
+#     loss = 0
+#     attention_maps = []
+
+#     for i, (net_feat, pret_feat) in enumerate(zip(net_partial_features, pret_partial_features)):
+#         assert net_feat.shape == pret_feat.shape, f"{net_feat.shape} - {pret_feat.shape}"
+
+#         adapter = getattr(
+#             model, f"adapter_{i+1}")
+
+#         pret_feat = pret_feat.detach()
+
+#         if teacher_forcing is None:
+#             curr_teacher_forcing = torch.zeros(
+#                 len(net_feat,)).bool().to(device)
+#             curr_ext_attention_map = torch.ones(
+#                 (len(net_feat), adapter.c)).to(device)
+#         else:
+#             curr_teacher_forcing = teacher_forcing
+#             curr_ext_attention_map = torch.stack(
+#                 [b[i] for b in extern_attention_maps], dim=0).float()
+
+#         adapt_loss, adapt_attention = adapter(net_feat, pret_feat, targets, task_ids,
+#                                               teacher_forcing=curr_teacher_forcing, attention_map=curr_ext_attention_map)
+
+#         loss += adapt_loss
+#         attention_maps.append(adapt_attention.detach().cpu().clone().data)
+
+#     return loss / (i + 1), attention_maps
+
+def partial_distill_loss(model, net_partial_features: list, pret_partial_features: list, targets,
+                         task_ids, device, teacher_forcing: list = None, extern_attention_maps: list = None):
 
     assert len(net_partial_features) == len(
         pret_partial_features), f"{len(net_partial_features)} - {len(pret_partial_features)}"
@@ -190,9 +229,7 @@ def partial_distill_loss(model, net_partial_features: list, pret_partial_feature
 
         adapter = getattr(
             model, f"adapter_{i+1}")
-
         pret_feat = pret_feat.detach()
-
         if teacher_forcing is None:
             curr_teacher_forcing = torch.zeros(
                 len(net_feat,)).bool().to(device)
@@ -202,14 +239,14 @@ def partial_distill_loss(model, net_partial_features: list, pret_partial_feature
             curr_teacher_forcing = teacher_forcing
             curr_ext_attention_map = torch.stack(
                 [b[i] for b in extern_attention_maps], dim=0).float()
-
-        adapt_loss, adapt_attention = adapter(net_feat, pret_feat, targets,
+        adapt_loss, adapt_attention = adapter(net_feat, pret_feat, targets, task_ids,
                                               teacher_forcing=curr_teacher_forcing, attention_map=curr_ext_attention_map)
 
         loss += adapt_loss
         attention_maps.append(adapt_attention.detach().cpu().clone().data)
 
     return loss / (i + 1), attention_maps
+
 
 class Preprocess(nn.Module):
     """Module to perform pre-process using Kornia on torch tensors."""
@@ -1701,15 +1738,17 @@ class DistillationMemory(MemoryDataset):
             self.previous_idx = np.append(self.previous_idx, indices)
         return data
 
-
 def get_train_datalist(dataset, sigma, repeat, init_cls, rnd_seed, mode):
     if mode=='remind':
         with open(f"collections/{dataset}/F_{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
             train_list = json.load(fp)
+        return train_list['stream'], train_list['cls_dict'], train_list['cls_addition']
     else:
         with open(f"collections/{dataset}/{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
             train_list = json.load(fp)
-    return train_list['stream'], train_list['cls_dict'], train_list['cls_addition']
+        print("train_list", train_list.keys())
+        return train_list['stream'], train_list['cls_dict'], train_list['cls_addition'], train_list['cls_order'], train_list["future_train_dict_k5"], train_list["future_train_dict_k10"], train_list["future_train_dict_k20"], train_list["future_train_dict_k100"]
+
 
 def get_test_datalist(dataset) -> List:
     try:

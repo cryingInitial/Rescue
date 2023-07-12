@@ -18,6 +18,18 @@ def base_parser():
         help="[mnist, cifar10, cifar100, imagenet]",
     )
 
+    # for forward transfer
+    parser.add_argument("--num_k_shot", type=int, default=10, help="")
+    parser.add_argument("--num_future_class", type=int, default=2, help="")
+    parser.add_argument("--future_training_iterations", type=int, default=20, help="")
+    
+    # for MOCO
+    parser.add_argument("--moco_k", type=int, default=4096, help="pre_train epoch")
+    parser.add_argument("--moco_dim", type=int, default=128, help="pre_train epoch")
+    parser.add_argument("--moco_T", type=float, default=0.07, help="pre_train epoch")
+    parser.add_argument("--moco_m", type=float, default=0.999, help="pre_train epoch")
+    parser.add_argument("--moco_coeff", type=float, default=0.1, help="pre_train epoch")
+
     # for ETF structure
     parser.add_argument("--num_eval_class", type=int, default=10, help="pre_train epoch")
     parser.add_argument("--num_class", type=int, default=10, help="pre_train epoch")
@@ -33,20 +45,11 @@ def base_parser():
     parser.add_argument("--use_feature_distillation", action="store_true", help="")
     parser.add_argument("--use_residual", action="store_true", help="")
     parser.add_argument("--current_feature_num", type=int, default=20, help="")
-    parser.add_argument("--distill_beta", type=float, default=0.5, help="")
-    parser.add_argument("--distill_strategy", type=str, default="naive")
-    parser.add_argument("--distill_threshold", type=float, default=0.5)
     parser.add_argument("--residual_strategy", type=str, default="")
     parser.add_argument("--residual_num_threshold", type=int, default=10, help="")
-    parser.add_argument("--use_residual_warmup", action="store_true", help="")
-    parser.add_argument("--use_residual_unique", action="store_true", help="")
-    parser.add_argument("--use_modified_knn", action="store_true", help="")
-    parser.add_argument("--ood_strategy", type=str, default="cutmix")
-    parser.add_argument("--ood_num_samples", type=int, default=4)
-    parser.add_argument("--use_patch_permutation", action="store_true")
-    parser.add_argument("--use_synthetic_regularization", action="store_true")
+    parser.add_argument("--use_neck_forward", action="store_true")
     parser.add_argument("--scl_coeff", type=float, default=0.1)
-    
+    parser.add_argument("--use_future_eval", action="store_true")
     
     # for baseline
     parser.add_argument("--recent_ratio", type=float, default=0.5, help="sampling ratio between recent and past")
@@ -69,10 +72,10 @@ def base_parser():
 
 
     parser.add_argument("--lambda_diverse_loss", default=0.3, type=float, help="")
-    parser.add_argument("--lambda_fp_replay", default=0.3, type=float, help="")
-    parser.add_argument("--lambda_fp", type=float, default=0.03, help="")
+    parser.add_argument("--lambda_fp_replay", default=1.2, type=float, help="")
+    parser.add_argument("--lambda_fp", type=float, default=0.005, help="")
     parser.add_argument("--der_alpha", type=float, default=0.3, help="")
-    parser.add_argument("--der_beta", type=float, default=0.8, help="")
+    parser.add_argument("--der_beta", type=float, default=1.2, help="")
 
     parser.add_argument("--rnd_seed", type=int, help="Random seed number.")
     parser.add_argument(

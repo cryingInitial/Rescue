@@ -1,13 +1,19 @@
 # When we make a new one, we should inherit the Finetune class.
 import logging
 import numpy as np
+from collections import defaultdict
 from methods.cl_manager import CLManagerBase
 from utils.train_utils import DR_loss, Accuracy, DR_Reverse_loss
 import torch
 import torch.nn as nn
 import copy
 import torch.nn.functional as F
-import pickle5 as pickle
+try:
+    # version < 3.8
+    import pickle5 as pickle
+except ImportError:
+    # version >= 3.8
+    import pickle
 from utils.data_loader import ImageDataset, MultiProcessLoader, cutmix_data, get_statistics, generate_new_data, generate_masking
 import math
 import utils.train_utils 
@@ -24,13 +30,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             kwargs["temp_batchsize"] = 0
         super().__init__(train_datalist, test_datalist, device, **kwargs)
         self.in_channels = self.model.fc.in_features
-        # 아래 것들 config 파일에 추가!
-        # num class = 100, eval_class = 60 
         self.num_classes = kwargs["num_class"]
-        
-        if self.ood_strategy == "rotate" and self.use_synthetic_regularization:
-            self.num_classes = self.num_classes * 4
-        
         self.eval_classes = 0 #kwargs["num_eval_class"]
         self.cls_feature_length = 50
         self.feature_mean_dict = {}
@@ -38,48 +38,39 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         self.feature_std_mean_list = []
         self.current_feature_num = kwargs["current_feature_num"]
         self.residual_num = kwargs["residual_num"]
-        self.ood_num_samples = kwargs["ood_num_samples"]
-        self.residual_num_threshold = kwargs["residual_num_threshold"]
-        self.distill_beta = kwargs["distill_beta"]
-        self.distill_strategy = kwargs["distill_strategy"]
-        self.distill_threshold = kwargs["distill_threshold"]
-        self.use_residual = kwargs["use_residual"]
         self.residual_strategy = kwargs["residual_strategy"]
-        self.use_residual_unique = kwargs["use_residual_unique"]
-        self.use_residual_warmup = kwargs["use_residual_warmup"]
-        self.use_modified_knn = kwargs["use_modified_knn"]
-        self.use_patch_permutation = kwargs["use_patch_permutation"]
+        self.future_train_loader = None
+        self.future_test_loader = None
         self.stds_list = []
         self.masks = {}
         self.residual_dict_index={}
+        self.softmax2 = nn.Softmax(dim=1).to(self.device)
         self.softmax = nn.Softmax(dim=0).to(self.device)
-        self.use_feature_distillation = kwargs["use_feature_distillation"]
         
         if self.loss_criterion == "DR":
-            if self.use_feature_distillation:
-                self.criterion = DR_loss(reduction="none").to(self.device)
-                
-            else:
-                self.criterion = DR_loss().to(self.device)
+            self.criterion = DR_loss().to(self.device)
         elif self.loss_criterion == "CE":
-            if self.use_feature_distillation:
-                self.criterion = nn.CrossEntropyLoss(reduction="none").to(self.device)
-            else:
-                self.criterion = nn.CrossEntropyLoss(reduction="mean").to(self.device)
+            self.criterion = nn.CrossEntropyLoss(reduction="mean").to(self.device)
 
         self.regularization_criterion = DR_Reverse_loss(reduction="mean").to(self.device)
         self.compute_accuracy = Accuracy(topk=self.topk)
-        self.model = select_model(self.model_name, self.dataset, 1, pre_trained=False).to(self.device)
+        self.use_neck_forward = kwargs["use_neck_forward"]
+        print("self.use_neck_forward", self.use_neck_forward)
+        self.model = select_model(self.model_name, self.dataset, 1, pre_trained=False, Neck=self.use_neck_forward).to(self.device)
         self.model.fc = nn.Linear(self.model.fc.in_features, self.num_classes).to(self.device)
         self.optimizer = select_optimizer(self.opt_name, self.lr, self.model)
         self.scheduler = select_scheduler(self.sched_name, self.optimizer)
         self.etf_initialize()
-        self.residual_dict = {}
-        self.feature_dict = {}
+        self.residual_dict = defaultdict(list)
+        self.feature_dict = defaultdict(list)
         self.cls_feature_dict = {}
         self.current_cls_feature_dict_index = {}
         self.note = kwargs["note"]
         os.makedirs(f"{self.note}", exist_ok=True)
+
+    def pre_logits(self, x):
+        x = x / torch.norm(x, p=2, dim=1, keepdim=True)
+        return x
 
     def get_cos_sim(self, a, b):
         inner_product = (a * b).sum(dim=1)
@@ -88,7 +79,22 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         cos = inner_product / (a_norm * b_norm)
         return cos
 
-    def get_within_class_covariance(self, mean_vec_list, feature_dict):
+    def batch_cov(self, points):
+        B, D = points.size()
+        mean = points.mean(dim=0)
+        diffs = (points - mean)
+        prods = torch.bmm(diffs.unsqueeze(2), diffs.unsqueeze(1))
+        return torch.mean(prods.diagonal(offset=0, dim1=-1, dim2=-2).sum(-1))
+    
+    def get_within_class_covariance(self, feature_dict):
+        cov_tensor = torch.zeros(len(list(feature_dict.keys()))).to(self.device)
+        # feature dimension 512로 fixed
+        for idx, klass in enumerate(list(feature_dict.keys())):
+            cov_tensor[klass] = self.batch_cov(feature_dict[klass])
+        return cov_tensor
+    
+    
+    def get_within_class_covariance2(self, mean_vec_list, feature_dict):
         cov_tensor = torch.zeros(len(list(mean_vec_list.keys()))).to(self.device)
         # feature dimension 512로 fixed
         for idx, klass in enumerate(list(feature_dict.keys())):
@@ -100,7 +106,8 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             W /= total_num
             cov_tensor[idx] = torch.trace(W)
         return cov_tensor
-
+    
+    
     def get_nc1(self, mean_vec_list, feature_dict):
         nc1_tensor = torch.zeros(len(list(mean_vec_list.keys()))).to(self.device)
         # for global avg calcuation, not just avg mean_vec, feature mean directly (since it is imbalanced dataset)
@@ -123,7 +130,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             
         return  nc1_tensor
 
-    def get_within_whole_class_covariance(self, whole_mean_vec, feature_list):
+    def get_within_whole_class_covariance2(self, whole_mean_vec, feature_list):
         # feature dimension 512로 fixed
         W = torch.zeros(self.model.fc.in_features, self.model.fc.in_features).to(self.device)
         total_num = 0
@@ -132,6 +139,10 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         total_num += len(feature_list)
         W /= total_num
         return torch.trace(W)
+
+    def get_within_whole_class_covariance(self, whole_features):
+        #return torch.stack(sum([v for v in feature_dict.values()], []))
+        return self.batch_cov(whole_features)
 
     def sample_inference(self, samples):
         with torch.no_grad():
@@ -175,158 +186,45 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         self.future_sample_num += 1
         return 0
 
-    def model_forward(self, x, y, sample_nums, augmented_input=False):
-        if self.cutmix:
-            do_cutmix = np.random.rand(1) < 0.5
-        else:
-            do_cutmix = False
+    def model_forward(self, x, y, sample_nums):
         
-        """Forward training data."""
-        target = self.etf_vec[:, y].t()
-        if do_cutmix and not augmented_input:
-            x, target_a, target_b, lam = cutmix_data(x=x, y=target, alpha=1.0)
-            with torch.cuda.amp.autocast(self.use_amp):
-                _, feature = self.model(x, get_feature=True)
-                feature = self.pre_logits(feature)
-                #loss = lam * self.criterion(logit, labels_a) + (1 - lam) * self.criterion(logit, labels_b)
-                loss = lam * self.criterion(feature, target_a) + (1 - lam) * self.criterion(feature, target_b)
-        else:
-            with torch.cuda.amp.autocast(self.use_amp):
-                _, feature = self.model(x, get_feature=True)
-                feature = self.pre_logits(feature)
+        with torch.cuda.amp.autocast(self.use_amp):
+            """Forward training data."""
+            target = self.etf_vec[:, y].t()
 
-                if self.loss_criterion == "DR":
-                    loss = self.criterion(feature, target)
-                    residual = (target - feature).detach()
-                    
-                elif self.loss_criterion == "CE":
-                    logit = feature @ self.etf_vec
-                    loss = self.criterion(logit, y)
-                    residual = (target - feature).detach()
-                    #residual = (F.one_hot(y, num_classes=self.num_learned_class) - self.softmax(logit/self.softmax_temperature)).detach()
+            _, feature = self.model(x, get_feature=True)
+            feature = self.pre_logits(feature)
 
-            if self.use_feature_distillation:
-                # calcualte current feature
-                for idx, y_i in enumerate(y):
-                    if y_i not in self.current_cls_feature_dict.keys():
-                        self.current_cls_feature_dict[y_i.item()] = [feature[idx].detach()]
-                    else:
-                        self.current_cls_feature_dict[y_i.item()].append(feature[idx].detach())
-                            
-                # check over storing
-                for y_i in torch.unique(y):
-                    if len(self.current_cls_feature_dict[y_i.item()]) >= self.current_feature_num:
-                        self.current_cls_feature_dict[y_i.item()] = self.current_cls_feature_dict[y_i][-self.current_cls_feature_num:]
-
-            if not augmented_input:
-                if self.use_feature_distillation:
-                    past_feature = torch.stack([self.pre_logits(self.cls_feature_dict[y_i.item()]) for y_i in y], dim=0)
-                    target_fc = torch.stack([self.etf_vec[:, y_i.item()] for y_i in y], dim=0)
-                    l2_loss = ((feature - past_feature.detach().squeeze()) ** 2).sum(dim=1)
-                    # naive distllation
-                    if self.distill_strategy == "naive":
-                        print("loss", loss.mean(), "l2_loss", self.distill_beta * l2_loss.mean())
-                        loss = (loss + self.distill_beta * l2_loss).mean()
-
-                    # similarity based distillation
-                    elif self.distill_strategy == "classwise":
-                        past_cos_sim = torch.abs(self.get_cos_sim(target_fc, past_feature.detach().squeeze(dim=1)))
-                        past_cos_sim -= self.distill_threshold
-                        beta_masking = torch.clamp(past_cos_sim, min=0.0, max=1.0)
-                        loss = (loss + self.distill_beta * beta_masking * l2_loss).mean()
-                    
-                    elif self.distill_strategy == "classwise_difference":
-                        current_feature = torch.stack([self.pre_logits(torch.mean(torch.stack(self.current_cls_feature_dict[y_i.item()], dim=0), dim=0).unsqueeze(0)) for y_i in y], dim=0)
-                        past_cos_sim = self.get_cos_sim(target_fc, past_feature.detach().squeeze(dim=1))
-                        current_cos_sim = self.get_cos_sim(target_fc, current_feature.squeeze(dim=1).to(self.device))
-                        masking = torch.abs(past_cos_sim) > torch.abs(current_cos_sim)
-                        beta_masking = torch.abs(past_cos_sim)
-                        beta_masking -= self.distill_threshold
-                        beta_masking = torch.clamp(beta_masking, min=0.0, max=1.0)
-                        beta_masking = masking * beta_masking
-                        loss = (loss + self.distill_beta * beta_masking * l2_loss).mean()
+            if self.loss_criterion == "DR":
+                loss = self.criterion(feature, target)
+                residual = (target - feature).detach()
                 
-                    elif self.distill_strategy == "classwise_difference_ver2":
-                        current_feature = torch.stack([self.pre_logits(torch.mean(torch.stack(self.current_cls_feature_dict[y_i.item()], dim=0), dim=0).unsqueeze(0)) for y_i in y], dim=0)
-                        past_cos_sim = self.get_cos_sim(target_fc, past_feature.detach().squeeze(dim=1))
-                        current_cos_sim = self.get_cos_sim(target_fc, current_feature.squeeze(dim=1).to(self.device))
-                        masking = torch.abs(past_cos_sim) > torch.abs(current_cos_sim)
-                        beta_masking = torch.abs(past_cos_sim) - torch.abs(current_cos_sim)
-                        beta_masking -= self.distill_threshold
-                        beta_masking = torch.clamp(beta_masking, min=0.0, max=1.0)
-                        beta_masking = masking * beta_masking
-                        #sim_difference = torch.abs(past_cos_sim - current_cos_sim)
-                        #sim_difference -= self.distill_threshold
-                        #beta_masking = torch.clamp(sim_difference, min=0.0, max=1.0)
-                        print("y")
-                        print(y)
-                        print("beta_masking")
-                        print(beta_masking)
-                        print("loss", loss.mean(), "l2_loss", (self.distill_beta * beta_masking * l2_loss).mean())
-                        loss = (loss + self.distill_beta * beta_masking * l2_loss).mean()
+            elif self.loss_criterion == "CE":
+                logit = feature @ self.etf_vec
+                loss = self.criterion(logit, y)
+                residual = (target - feature).detach()
 
-                # residual dict update
-                if self.use_residual:
-                    if self.use_residual_unique:    
-                        for idx, t in enumerate(y):
-                            if t.item() not in self.residual_dict.keys():
-                                self.residual_dict[t.item()] = [residual[idx]]
-                                self.feature_dict[t.item()] = [feature.detach()[idx]]
-                                self.residual_dict_index[t.item()] = [sample_nums[idx].item()]
-                            else: 
-                                if sample_nums[idx].item() in self.residual_dict_index[t.item()]:
-                                    target_index = self.residual_dict_index[t.item()].index(sample_nums[idx].item())
-                                    del self.residual_dict[t.item()][target_index]
-                                    del self.feature_dict[t.item()][target_index]
-                                    del self.residual_dict_index[t.item()][target_index]
-                                    
-                                self.residual_dict[t.item()].append(residual[idx])
-                                self.feature_dict[t.item()].append(feature.detach()[idx])
-                                self.residual_dict_index[t.item()].append(sample_nums[idx].item())
-                                
-                            if len(self.residual_dict[t.item()]) > self.residual_num:
-                                self.residual_dict[t.item()] = self.residual_dict[t.item()][1:]
-                                self.feature_dict[t.item()] = self.feature_dict[t.item()][1:]
-                                self.residual_dict_index[t.item()] = self.residual_dict_index[t.item()][1:]
-                    else:
-                        for idx, t in enumerate(y):
-                            if t.item() not in self.residual_dict.keys():
-                                self.residual_dict[t.item()] = [residual[idx]]
-                                self.feature_dict[t.item()] = [feature.detach()[idx]]
-                            else:  
-                                self.residual_dict[t.item()].append(residual[idx])
-                                self.feature_dict[t.item()].append(feature.detach()[idx])
-                                
-                            if len(self.residual_dict[t.item()]) > self.residual_num:
-                                self.residual_dict[t.item()] = self.residual_dict[t.item()][1:]
-                                self.feature_dict[t.item()] = self.feature_dict[t.item()][1:]
-                
-                '''
-                if self.use_synthetic_regularization:
-                    #ood_dict, reg_loss = self.ood_inference()
-                    print("loss", loss, "reg_loss", reg_loss)
-                    if reg_loss is not None:
-                        loss += reg_loss
-                    if self.store_pickle and self.rnd_seed == 1 and self.sample_num % 100 == 0 and self.sample_num !=0 and self.ood_strategy!="none":
-                        ood_dict, _ = self.ood_inference(16)
-                        self.ood_store(ood_dict)
-                ''' 
-
-        # accuracy calculation
-        with torch.no_grad():
-            cls_score = feature.detach() @ self.etf_vec
-            if self.use_synthetic_regularization:
-                acc, correct = self.compute_accuracy(cls_score, y, real_entered_num_class = len(self.memory.cls_list), real_num_class = self.real_num_classes)
-            else:    
-                acc, correct = self.compute_accuracy(cls_score[:, :len(self.memory.cls_list)], y)
+            # residual dict update
+            if self.use_residual:
+                for label in torch.unique(y):
+                    index = (y==label).nonzero(as_tuple=True)[0]
+                    self.residual_dict[label.item()].extend(residual[index])
+                    self.feature_dict[label.item()].extend(feature.detach()[index])
+                    
+                    if len(self.residual_dict[label.item()]) > self.residual_num:
+                        self.residual_dict[label.item()] = self.residual_dict[label.item()][-self.residual_num:]
+                        self.feature_dict[label.item()] = self.feature_dict[label.item()][-self.residual_num:]
             
-            acc = acc.item()
-        
-        return loss, feature, correct
 
-    def pre_logits(self, x):
-        x = x / torch.norm(x, p=2, dim=1, keepdim=True)
-        return x
+            # accuracy calculation
+            with torch.no_grad():
+                cls_score = feature.detach() @ self.etf_vec
+                acc, correct = self.compute_accuracy(cls_score[:, :len(self.memory.cls_list)], y)
+                
+                acc = acc.item()
+        
+            return loss, feature, correct
+
 
     def online_train(self, iterations=1):
         total_loss, correct, num_data = 0.0, 0.0, 0.0
@@ -357,22 +255,6 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             correct += correct_batch
             num_data += y.size(0)
             
-            if self.use_synthetic_regularization:
-                ood_data = self.ood_inference(self.ood_num_samples)
-                if ood_data is not None:
-                    new_x, new_y = ood_data
-                    self.optimizer.zero_grad()
-                    loss, feature, correct_batch = self.model_forward(new_x, new_y, sample_nums, augmented_input=True)
-                    if self.use_amp:
-                        self.scaler.scale(loss).backward()
-                        self.scaler.step(self.optimizer)
-                        self.scaler.update()
-                    else:
-                        loss.backward()
-                        self.optimizer.step()
-
-                #self.after_model_update()
-                #total_loss += loss.item()            
 
         return total_loss / iterations, correct / num_data
         
@@ -416,93 +298,13 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
             mean_vec_tensor_list[cls] = mean_vec_list[cls]
         
         return mean_vec_tensor_list
-
-    def ood_store(self, ood_dict):
-        name_prefix = self.note + "/etf_resmem_sigma" + str(self.sigma) + "_num_" + str(self.sample_num) + "_iter" + str(self.online_iter) + "_sigma" + str(self.softmax_temperature) + "_criterion_" + self.select_criterion + "_top_k" + str(self.knn_top_k) + "_knn_sigma"+ str(self.knn_sigma)
-        ood_pickle_name = name_prefix + "_ood.pickle"        
-
-        for key in list(ood_dict.keys()):
-            ood_dict[key] = torch.cat(ood_dict[key])
-            
-        with open(ood_pickle_name, 'wb') as f:
-            pickle.dump(ood_dict, f, pickle.HIGHEST_PROTOCOL) 
-
-    def ood_inference(self, ood_num_samples, ood_sampling_num=1):
-        ood_dict = {}
-        new_x_data = []
-        new_y_data = []
-        
-        feature_cluster = self.get_mean_vec()
-        loss = None
-        #for ood_data in ood_data_list:
-        #ood_data = self.memory.generate_ood_class(num_samples=int(self.batch_size/4))
-        ood_data_list = [self.memory.generate_ood_class(num_samples=ood_num_samples) for _ in range(ood_sampling_num)]
-        for ood_data in ood_data_list:
-            if ood_data is not None:
-                if self.ood_strategy == "cutmix":
-                    key, x1, x2 = ood_data
-                    x1 = load_batch(x1, self.data_dir, self.test_transform)
-                    x2 = load_batch(x2, self.data_dir, self.test_transform)                
-                    x1 = x1.to(self.device)
-                    x2 = x2.to(self.device)
-                    
-                    if key not in self.masks.keys():
-                        self.masks[key] = generate_masking(x1, self.device)
-                    #if key not in ood_dict.keys():
-                    #    ood_dict[key] = []
-                    index, mask = self.masks[key]
-
-                    if self.use_patch_permutation:
-                        new_x1, _ = generate_new_data(x1, x2, self.device, mask, index)
-                    else:
-                        new_x1, _ = generate_new_data(x1, x2, self.device, mask)
-
-                    new_x_data.append(new_x1)
-                    #new_y_data.append(new_y1) # TODO new_y1을 cutmix에서 어떻게 define할지
-
-                    '''
-                    _, feature = self.model(new_x1, get_feature=True)
-                    feature = self.pre_logits(feature)            
-                    loss = self.regularization_criterion(feature, feature_cluster, self.num_learned_class)
-                    ood_dict[key].append(feature)
-                    '''
-                
-                elif self.ood_strategy == "rotate":
-                    x, y = ood_data
-                    x = load_batch(x, self.data_dir, self.test_transform)
-                    x = x.to(self.device)
-                    
-                    new_x, new_y = my_segmentation_transforms(x, y, self.real_num_classes)
-                    new_y = new_y.to(self.device)
-                    new_x_data.append(new_x)
-                    new_y_data.append(new_y)
-                    '''
-                    _, feature_right = self.model(right_x, get_feature=True)
-                    feature_right = self.pre_logits(feature_right)
-                    
-                    _, feature_left = self.model(left_x, get_feature=True)
-                    feature_left = self.pre_logits(feature_left)
-                    
-                    right_key = str(cls) + "_right"
-                    left_key = str(cls) + "_left"
-                    if right_key not in ood_dict.keys():
-                        ood_dict[right_key] = []
-                        ood_dict[left_key] = []
-                    ood_dict[right_key].append(feature_right)
-                    ood_dict[left_key].append(feature_left)
-                    '''
-                    
-        #return ood_dict, loss
-        if len(new_x_data) == 0:
-            return None
-        else:
-            return torch.cat(new_x_data), torch.cat(new_y_data)
     
     def update_memory(self, sample, sample_num=None):
         #self.reservoir_memory(sample)
         self.balanced_replace_memory(sample, sample_num)
 
     def add_new_class(self, class_name, sample):
+        self.added = True
         self.cls_dict[class_name] = len(self.exposed_classes)
         self.exposed_classes.append(class_name)
         self.num_learned_class = len(self.exposed_classes)
@@ -516,8 +318,6 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         
         self.num_updates += self.online_iter
         if self.num_updates >= 1:
-            if self.use_feature_distillation:
-                self.sample_inference([sample])
             train_loss, train_acc = self.online_train(iterations=int(self.num_updates))
             self.report_training(sample_num, train_loss, train_acc)
             self.num_updates -= int(self.num_updates)
@@ -537,13 +337,15 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 self.save_features(feature_pickle_name, class_pickle_name)
 
                 with open(fc_pickle_name, 'wb') as f:
+                    '''
                     num_leanred_class = len(self.memory.cls_list)
                     index = []
                     for i in range(4):
                         #inf_index += list(range(i * real_num_class, i * real_num_class + real_entered_num_class))
                         index += list(range(i * self.real_num_classes + num_leanred_class, min((i+1) * self.real_num_classes, self.num_classes)))
                     pickle.dump(self.etf_vec[:, index].T, f, pickle.HIGHEST_PROTOCOL)
-                    #pickle.dump(self.etf_vec[:, :len(self.memory.cls_list)].T, f, pickle.HIGHEST_PROTOCOL)
+                    '''
+                    pickle.dump(self.etf_vec[:, :len(self.memory.cls_list)].T, f, pickle.HIGHEST_PROTOCOL)
 
                 with open(pickle_name_feature_std_mean_list, 'wb') as f:
                     pickle.dump(self.feature_std_mean_list, f, pickle.HIGHEST_PROTOCOL)
@@ -551,11 +353,6 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 with open(pickle_name_stds_list, 'wb') as f:
                     pickle.dump(self.stds_list, f, pickle.HIGHEST_PROTOCOL)
                 
-                # ood data 저장
-                '''
-                if self.ood_strategy != "none": 
-                    self.ood_inference()
-                '''
         
 
     def reservoir_memory(self, sample):
@@ -605,60 +402,186 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
         else:
             return torch.eq(res, gt_label).to(dtype=torch.float32)
 
+    def future_evaluation(self):
+        
+        total_correct, total_num_data, total_loss = 0.0, 0.0, 0.0
+        correct_l = torch.zeros(self.n_classes).to(self.device)
+        num_data_l = torch.zeros(self.n_classes).to(self.device)
+        
+        # k-shot training temp_model using future data
+        temp_model = copy.deepcopy(self.model)
+        temp_model.train()
+        temp_optimizer = select_optimizer(self.opt_name, self.lr, temp_model)
+        
+        for name, param in temp_model.named_parameters():
+            if 'neck' not in name:
+                param.requires_grad = False
+                
+        future_residual_dict = defaultdict(list)
+        future_feature_dict = defaultdict(list)
+        
+        for i in range(self.future_training_iterations):
+            for i, data in enumerate(self.future_train_loader):
+                x = data["image"].to(self.device)
+                y = data["label"].to(self.device)
+                
+                temp_optimizer.zero_grad()
+                # logit can not be used anymore
+                with torch.cuda.amp.autocast(self.use_amp):
+                    target = self.etf_vec[:, y].t()
+                    _, feature = temp_model(x, get_feature=True)
+                    feature = self.pre_logits(feature)
+                    loss = self.criterion(feature, target)
+                    residual = (target - feature).detach()
+                        
+                    if self.use_residual:
+                        for idx, t in enumerate(y):
+                            future_residual_dict[t.item()].append(residual[idx])
+                            future_feature_dict[t.item()].append(feature.detach()[idx])
+                                
+                            if len(future_residual_dict[t.item()]) > self.residual_num:
+                                future_residual_dict[t.item()] = future_residual_dict[t.item()][1:]
+                                future_feature_dict[t.item()] = future_feature_dict[t.item()][1:]
+                            
+                if self.use_amp:
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(temp_optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    temp_optimizer.step()
+
+        '''
+        # merge current (feature, residual) dict and future (feature, residual) dict
+        for key in self.residual_dict.keys():
+            future_residual_dict[key] = self.residual_dict[key]
+            future_feature_dict[key] = self.feature_dict[key]
+        '''
+
+        if self.use_residual:
+            residual_list = torch.stack(list(future_residual_dict.values())[0])
+            feature_list = torch.stack(list(future_feature_dict.values())[0])
+
+            # residual dict 내의 feature들이 어느정도 잘 모여있는 상태여야 residual term good
+            nc1_feature_dict = defaultdict(list)
+            mean_vec_list = defaultdict(list)
+            for cls in list(future_feature_dict.keys()):
+                stacked_feature_dict = torch.stack(future_feature_dict[cls]).detach()
+                nc1_feature_dict[cls] = stacked_feature_dict / torch.norm(stacked_feature_dict, p=2, dim=1, keepdim=True)
+                mean_vec_list[cls] = torch.mean(stacked_feature_dict, dim=0)
+                
+            mu_G = torch.mean(torch.stack(list(future_feature_dict.values())[0]), dim=0)
+            whole_cov_value2 = self.get_within_whole_class_covariance2(mu_G, feature_list)
+            whole_cov_value = self.get_within_whole_class_covariance(mu_G, feature_list)
+            print("whole_cov_value2", whole_cov_value2, "whole_cov_value", whole_cov_value)
+            if self.residual_strategy == "within":
+                cov_tensor = self.get_within_class_covariance(mean_vec_list, nc1_feature_dict)
+                prob = torch.ones_like(cov_tensor).to(self.device) - cov_tensor / whole_cov_value
+                print("future prob")
+                print(prob)
+            elif self.residual_strategy == "nc1":
+                nc1_tensor = self.get_nc1(mean_vec_list, nc1_feature_dict)
+                prob = torch.ones_like(cov_tensor).to(self.device) - nc1_tensor / whole_cov_value
+                print("future prob")
+                print(prob)
+        
+        temp_model.eval()
+        with torch.no_grad():
+            for i, data in enumerate(self.future_test_loader):
+                x = data["image"]
+                y = data["label"]
+                x = x.to(self.device)
+                y = y.to(self.device)
+
+                _, features = temp_model(x, get_feature=True)
+                features = self.pre_logits(features)
+
+                if self.use_residual:
+                    # |z-z(i)|**2
+                    w_i_lists = -torch.norm(features.view(-1, 1, features.shape[1]) - feature_list, p=2, dim=2)
+                    
+                    # top_k w_i index select
+                    w_i_indexs = torch.topk(w_i_lists, self.knn_top_k)[1].long()
+                    
+                    # meshgrid로 격자점을 생성
+                    idx1, _ = torch.meshgrid(torch.arange(w_i_indexs.shape[0]), torch.arange(w_i_indexs.shape[1]))
+                    w_i_lists = self.softmax2(w_i_lists[idx1, w_i_indexs] / self.knn_sigma)
+
+                    # select top_k residuals
+                    residual_lists = residual_list[w_i_indexs]
+                    residual_terms = torch.bmm(w_i_lists.unsqueeze(1), residual_lists).squeeze()
+                    
+                if self.use_residual:
+                        
+                    if self.residual_strategy == "within" or self.residual_strategy == "nc1":
+                        index = (prob > torch.rand(1).to(self.device)).nonzero(as_tuple=True)[0]
+                        mask = torch.isin(y, index)
+                        residual_terms *= mask.unsqueeze(1)
+                        
+                    features += residual_terms
+                        
+                if self.loss_criterion == "DR":
+                    target = self.etf_vec[:, y].t()
+                    loss = self.criterion(features, target)
+
+                elif self.loss_criterion == "CE":
+                    logit = features @ self.etf_vec
+                    loss = self.criterion(logit, y)
+
+
+                cls_score = features @ self.etf_vec
+                pred = torch.argmax(cls_score, dim=-1)
+                #_, correct_count = self.compute_accuracy(cls_score[:, :len(self.memory.cls_list)], y)
+                
+                _, correct_count = self.compute_accuracy(cls_score[:, :len(self.memory.cls_list) + self.num_future_class], y)
+                total_correct += correct_count
+
+                total_loss += loss.item()
+                total_num_data += y.size(0)
+
+                xlabel_cnt, correct_xlabel_cnt = self._interpret_pred(y, pred)
+                correct_l += correct_xlabel_cnt.detach()
+                num_data_l += xlabel_cnt.detach()
+
+        avg_acc = total_correct / total_num_data
+        avg_loss = total_loss / len(self.test_loader)
+        cls_acc = (correct_l / (num_data_l + 1e-5)).cpu().numpy().tolist()
+        ret = {"avg_loss": avg_loss, "avg_acc": avg_acc, "cls_acc": cls_acc}
+        return ret
+        
+        
     def evaluation(self, test_loader, criterion):
         print("Memory State")
         print(self.memory.cls_count)
         total_correct, total_num_data, total_loss = 0.0, 0.0, 0.0
         correct_l = torch.zeros(self.n_classes).to(self.device)
         num_data_l = torch.zeros(self.n_classes).to(self.device)
-        total_acc = 0.0
-        label = []
-        feature_dict = {}
         self.model.eval()
 
         if self.use_residual:
-            residual_list = []
-            feature_list = []
-            key_list = []
-            for key in self.residual_dict.keys():
-                residual_list.extend(self.residual_dict[key])
-                feature_list.extend(self.feature_dict[key])
-                key_list.extend([int(key) for _ in range(len(self.feature_dict[key]))])
-                print("residual", key, len(self.residual_dict[key]))
-            residual_list = torch.stack(residual_list)
-            feature_list = torch.stack(feature_list)
-            key_list = torch.Tensor(key_list).to(self.device)
-
-            # residual dict 내의 feature들이 어느정도 잘 모여있는 상태여야 residual term good
-            nc1_feature_dict = {}
-            mu_G = 0
-            num_feature = 0
-            mean_vec_list = {}
-            mean_vec_tensor_list = []
-            for cls in list(self.feature_dict.keys()):
-                nc1_feature_dict[cls] = torch.stack(self.feature_dict[cls]).detach()
-                nc1_feature_dict[cls] /= torch.norm(torch.stack(self.feature_dict[cls], dim=0), p=2, dim=1, keepdim=True)
-                mean_vec_list[cls] = torch.mean(torch.stack(self.feature_dict[cls]), dim=0)
-                mean_vec_tensor_list.append(mean_vec_list[cls])
-                mu_G += torch.sum(nc1_feature_dict[cls], dim=0)
-                num_feature += len(self.feature_dict[cls])
+            residual_list = torch.stack(sum([v for v in self.residual_dict.values()], [])) #torch.stack(list(self.residual_dict.values())[0])
+            feature_list = torch.stack(sum([v for v in self.feature_dict.values()], [])) #torch.stack(list(self.feature_dict.values())[0])
+            norm_feature_value = torch.norm(feature_list, p=2, dim=0, keepdim=True)
             
-            mu_G /= num_feature
-            mean_vec_tensor_list = torch.stack(mean_vec_tensor_list)       
-            whole_cov_value = self.get_within_whole_class_covariance(mu_G, feature_list)
+            # residual dict 내의 feature들이 어느정도 잘 모여있는 상태여야 residual term good
+            nc1_feature_dict = defaultdict(list)
+            for cls in list(self.feature_dict.keys()):
+                nc1_feature_dict[cls] = torch.stack(self.feature_dict[cls]) / norm_feature_value
             
             if self.residual_strategy == "within":
-                cov_tensor = self.get_within_class_covariance(mean_vec_list, nc1_feature_dict)
+                whole_cov_value = self.get_within_whole_class_covariance(feature_list / norm_feature_value)
+                cov_tensor = self.get_within_class_covariance(nc1_feature_dict)
                 prob = torch.ones_like(cov_tensor).to(self.device) - cov_tensor / whole_cov_value
-                print("prob")
-                print(prob)
+            '''
             elif self.residual_strategy == "nc1":
                 nc1_tensor = self.get_nc1(mean_vec_list, nc1_feature_dict)
                 prob = torch.ones_like(cov_tensor).to(self.device) - nc1_tensor / whole_cov_value
                 print("prob")
                 print(prob)
+            '''
                 
         with torch.no_grad():
+            rand_num = torch.rand(1).to(self.device)
             for i, data in enumerate(test_loader):
                 x = data["image"]
                 y = data["label"]
@@ -669,77 +592,27 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 features = self.pre_logits(features)
 
                 if self.use_residual:
-
                     # |z-z(i)|**2
-                    # print("-torch.norm(feature - feature_list, p=2, dim=1, keepdim=True)", torch.norm(features[0] - feature_list, p=2, dim=1, keepdim=True).shape)
-                    w_i_lists = [-torch.norm(feature - feature_list, p=2, dim=1, keepdim=True) for feature in features.detach()]
-
-                    # top_k w_i index select
-                    w_i_indexs = [torch.topk(w_i_list.squeeze(), self.knn_top_k)[1].long() for w_i_list in w_i_lists]
+                    w_i_lists = -torch.norm(features.view(-1, 1, features.shape[1]) - feature_list, p=2, dim=2)
                     
-                    # modified_knn
-                    if self.use_modified_knn:
-                        w_i_new_indexs = []
-                        for w_i in w_i_indexs:
-                            unique = torch.unique(key_list[w_i], return_counts=True)
-                            index = (key_list[w_i] == unique[0][torch.argmax(unique[1]).item()].item()).nonzero(as_tuple=True)[0]
-                            w_i_new_indexs.append(w_i[index])
-                        w_i_indexs = w_i_new_indexs
-                        
-                    # top_k w_i 
-                    if self.select_criterion == "softmax":
-                        #w_i_lists = [self.softmax(torch.topk(w_i_list.squeeze(), self.knn_top_k)[0] / self.knn_sigma) for w_i_list in w_i_lists]
-                        w_i_lists = [self.softmax(w_i_list.squeeze()[w_i_index] / self.knn_sigma) for w_i_index, w_i_list in zip(w_i_indexs, w_i_lists)]
-                    elif self.select_criterion == "linear": # just weight sum
-                        w_i_lists = [torch.topk(w_i_list.squeeze(), self.knn_top_k)[0] / torch.sum(torch.topk(w_i_list.squeeze(), self.knn_top_k)[0]).item() for w_i_list in w_i_lists]
+                    # top_k w_i index select
+                    w_i_indexs = torch.topk(w_i_lists, self.knn_top_k)[1].long()
+                    
+                    # meshgrid로 격자점을 생성
+                    idx1, _ = torch.meshgrid(torch.arange(w_i_indexs.shape[0]), torch.arange(w_i_indexs.shape[1]))
+                    w_i_lists = self.softmax2(w_i_lists[idx1, w_i_indexs] / self.knn_sigma)
 
                     # select top_k residuals
-                    residual_lists = [residual_list[w_i_index] for w_i_index in w_i_indexs]
-                    residual_terms = [rs_list.T @ w_i_list  for rs_list, w_i_list in zip(residual_lists, w_i_lists)]
-
-                    '''
-                    unique_y = torch.unique(y).tolist()
-                    for u_y in unique_y:
-                        indices = (y == u_y).nonzero(as_tuple=True)[0]
-                        if u_y not in feature_dict.keys():
-                            feature_dict[u_y] = [torch.index_select(features, 0, indices)]
-                        else:
-                            feature_dict[u_y].append(torch.index_select(features, 0, indices))
-                    '''
-
+                    residual_lists = residual_list[w_i_indexs]
+                    residual_terms = torch.bmm(w_i_lists.unsqueeze(1), residual_lists).squeeze()
+                    
                 if self.use_residual:
-                    if self.use_residual_unique:
-                        total_mask = torch.Tensor([len(self.residual_dict_index[key]) for key in list(self.residual_dict_index.keys())]).to(self.device) >= self.residual_num_threshold
-                    else:
-                        total_mask = torch.Tensor([len(self.residual_dict[key]) for key in list(self.residual_dict.keys())]).to(self.device) >= self.residual_num_threshold
-                        
-                    if self.residual_strategy == "prob":
-                        prob_mask = prob > torch.rand(1).to(self.device)
-                        
-                        if self.use_residual_warmup:
-                            prob_mask *= total_mask
-
-                        mask = torch.zeros(len(y)).to(self.device)
-                        for idx, y_i in enumerate(y):
-                            if y_i >= len(prob_mask):
-                                mask[idx] = 0
-                                continue
-                            mask[idx] = prob_mask[y_i.item()]
-                        index = (mask==1).nonzero(as_tuple=True)[0]
-                        features[index] += torch.stack(residual_terms).to(self.device)[index]
-                        
-                    elif self.residual_strategy == "none":
-                        if self.use_residual_warmup:
-                            mask = torch.zeros(len(y)).to(self.device)
-                            for idx, y_i in enumerate(y):
-                                if y_i >= len(total_mask):
-                                    mask[idx] = 0
-                                    continue
-                                mask[idx] = total_mask[y_i.item()]
-                            index = (mask==1).nonzero(as_tuple=True)[0]                      
-                            features[index] += torch.stack(residual_terms).to(self.device)[index]
-                        else:
-                            features += torch.stack(residual_terms).to(self.device)
+                    if self.residual_strategy == "within" or self.residual_strategy == "nc1":
+                        index = (prob > rand_num).nonzero(as_tuple=True)[0]
+                        mask = torch.isin(y, index)
+                        print("mask", (mask==1).sum())
+                        residual_terms *= mask.unsqueeze(1)
+                    features += residual_terms
                         
                 if self.loss_criterion == "DR":
                     target = self.etf_vec[:, y].t()
@@ -748,9 +621,6 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 elif self.loss_criterion == "CE":
                     logit = features @ self.etf_vec
                     loss = criterion(logit, y)
-
-                if self.use_feature_distillation:
-                    loss = loss.mean()
 
                 # accuracy calculation
                 with torch.no_grad():

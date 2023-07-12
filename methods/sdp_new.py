@@ -50,7 +50,7 @@ class SDP(CLManagerBase):
         if sample["klass"] not in self.memory.cls_list:
             self.memory.add_new_class(sample["klass"])
             self.dataloader.add_new_class(self.memory.cls_dict)
-        self.update_memory(sample)
+        self.update_memory(sample, self.future_sample_num)
         self.temp_future_batch.append(sample)
         self.future_num_updates += self.online_iter
 
@@ -61,19 +61,19 @@ class SDP(CLManagerBase):
         self.future_sample_num += 1
         return 0
 
-    def update_memory(self, sample):
-        self.balanced_replace_memory(sample)
+    def update_memory(self, sample, sample_num=None):
+        self.balanced_replace_memory(sample, sample_num)
 
-    def balanced_replace_memory(self, sample):
+    def balanced_replace_memory(self, sample, sample_num = None):
         if len(self.memory.images) >= self.memory_size:
             label_frequency = copy.deepcopy(self.memory.cls_count)
             label_frequency[self.memory.cls_dict[sample['klass']]] += 1
             cls_to_replace = np.random.choice(
                 np.flatnonzero(np.array(label_frequency) == np.array(label_frequency).max()))
             idx_to_replace = np.random.choice(self.memory.cls_idx[cls_to_replace])
-            self.memory.replace_sample(sample, idx_to_replace)
+            self.memory.replace_sample(sample, idx_to_replace, sample_num=sample_num)
         else:
-            self.memory.replace_sample(sample)
+            self.memory.replace_sample(sample, sample_num=sample_num)
 
     def add_new_class(self, class_name):
         self.cls_dict[class_name] = len(self.exposed_classes)
@@ -136,6 +136,42 @@ class SDP(CLManagerBase):
             self.report_training(sample_num, train_loss, train_acc)
             self.num_updates -= int(self.num_updates)
 
+    def online_train(self, iterations=1):
+        total_loss, correct, num_data = 0.0, 0.0, 0.0
+
+        for i in range(iterations):
+            self.model.train()
+            data = self.get_batch()
+            x = data["image"].to(self.device)
+            y = data["label"].to(self.device)
+            sample_nums = data["sample_nums"].to(self.device)
+            self.before_model_update()
+
+            self.optimizer.zero_grad()
+            logit, loss = self.model_forward(x,y, sample_nums)
+
+            _, preds = logit.topk(self.topk, 1, True, True)
+
+            if self.use_amp:
+                self.scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.optimizer.step()
+
+            #self.total_flops += (len(y) * self.backward_flops)
+
+            self.after_model_update()
+
+            total_loss += loss.item()
+            correct += torch.sum(preds == y.unsqueeze(1)).item()
+            num_data += y.size(0)
+
+        return total_loss / iterations, correct / num_data
+
     def sample_inference(self, sample):
         self.sdp_model.eval()
         x = load_data(sample, self.data_dir, self.test_transform).unsqueeze(0)
@@ -190,7 +226,7 @@ class SDP(CLManagerBase):
 
         #self.total_flops += (9 * self.params)
 
-    def model_forward(self, x, y, distill=True, use_cutmix=True):
+    def model_forward(self, x, y, sample_nums, distill=True, use_cutmix=True):
         criterion = nn.CrossEntropyLoss(reduction='none')
         self.sdp_model.train()
         do_cutmix = False #use_cutmix and self.cutmix and np.random.rand(1) < 0.5
@@ -230,7 +266,43 @@ class SDP(CLManagerBase):
             #self.total_flops += (len(y) * 2 * self.forward_flops)
             return logit, loss
         else:
-            return super().model_forward(x, y)
+            return super().model_forward(x, y, sample_nums)
+
+    def online_train(self, iterations=1):
+        total_loss, correct, num_data = 0.0, 0.0, 0.0
+
+        for i in range(iterations):
+            self.model.train()
+            data = self.get_batch()
+            x = data["image"].to(self.device)
+            y = data["label"].to(self.device)
+            sample_nums = data["sample_nums"].to(self.device)
+            self.before_model_update()
+
+            self.optimizer.zero_grad()
+            logit, loss = self.model_forward(x,y, sample_nums)
+
+            _, preds = logit.topk(self.topk, 1, True, True)
+
+            if self.use_amp:
+                self.scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.optimizer.step()
+
+            #self.total_flops += (len(y) * self.backward_flops)
+
+            self.after_model_update()
+
+            total_loss += loss.item()
+            correct += torch.sum(preds == y.unsqueeze(1)).item()
+            num_data += y.size(0)
+
+        return total_loss / iterations, correct / num_data
 
     def get_grad(self, logit, label, weight):
         prob = F.softmax(logit)

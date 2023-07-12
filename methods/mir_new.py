@@ -128,12 +128,16 @@ class MIR(ER):
             loss.backward()
             grads = {}
             for name, param in self.model.named_parameters():
+                if "neck" in name:
+                    continue
                 grads[name] = param.grad.data
 
             if cands is not None:
                 lr = self.optimizer.param_groups[0]['lr']
                 new_model = copy.deepcopy(self.model)
                 for name, param in new_model.named_parameters():
+                    if "neck" in name:
+                        continue
                     param.data = param.data - lr * grads[name]
 
                 mem_x = cands[1]['image']
@@ -182,6 +186,9 @@ class MIR(ER):
             self.optimizer.zero_grad()
             logit, loss = self.model_forward(x, y, sample_nums)
             _, preds = logit.topk(self.topk, 1, True, True)
+
+            print("preds")
+            print(preds.squeeze())
 
             if self.use_amp:
                 self.scaler.scale(loss).backward()

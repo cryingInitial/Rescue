@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 from utils.torch_utils import load_state_dict_from_url 
-from mmcv.cnn import build_norm_layer
+# from mmcv.cnn import build_norm_layer
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -198,8 +198,9 @@ class Bottleneck(nn.Module):
 
         return out
 
-def _resnet(arch, block, layers, pretrained, progress, dataset=False, G=False, F=False, **kwargs):
-    
+
+def _resnet(arch, block, layers, pretrained, progress, dataset=False, G=False, F=False, Neck = False, **kwargs):
+    model = ResNet(block, layers, Neck, **kwargs)
     if G:
         model = ResNet_G(block, layers, **kwargs)
         return model
@@ -207,8 +208,6 @@ def _resnet(arch, block, layers, pretrained, progress, dataset=False, G=False, F
         model = ResNet_F(block, layers, **kwargs)
         return model
     
-    model = ResNet(block, layers, **kwargs)
-
     if pretrained:
         
         state_dict = load_state_dict_from_url(model_urls[arch],
@@ -226,13 +225,14 @@ def _resnet(arch, block, layers, pretrained, progress, dataset=False, G=False, F
 
     return model
 
-def resnet18(pretrained=False, progress=True, dataset=False, G=False, F=False, **kwargs):
-    return _resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress, dataset=dataset, G=G, F=F, **kwargs)
+
+def resnet18(pretrained=False, progress=True, dataset=False, G=False, F=False, Neck=False, **kwargs):
+    return _resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress, dataset=dataset, G=G, F=F, Neck = Neck, **kwargs)
 
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
+    def __init__(self, block, layers, Neck=False, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None):
         super(ResNet, self).__init__()
@@ -250,6 +250,10 @@ class ResNet(nn.Module):
         if len(replace_stride_with_dilation) != 3:
             raise ValueError("replace_stride_with_dilation should be None "
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
+        
+        # neck layer forward or not
+        self.neck_forward = Neck
+        
         self.neck = MLPFFNNeck(in_channels = 512, out_channels=512)
         self.groups = groups
         self.base_width = width_per_group
@@ -331,8 +335,9 @@ class ResNet(nn.Module):
 
         feature = self.avgpool(out4)
 
-        # neck layer
-        #x = self.neck(x)
+        if self.neck_forward:
+            # neck layer
+            feature = self.neck(feature)
 
         feature = torch.flatten(feature, 1)
         out = self.fc(feature)
