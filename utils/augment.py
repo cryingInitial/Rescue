@@ -137,6 +137,17 @@ def get_transform(dataset, transform_list, transform_on_gpu=False):
         )
     logger.info(f"Using train-transforms {train_transform}")
 
+    future_train_transform = transforms.Compose(
+        [
+            transforms.Resize((inp_size, inp_size)),
+            transforms.RandomCrop(inp_size, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandAugment(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ]
+    )
+
     test_transform = transforms.Compose(
         [
             transforms.Resize((inp_size, inp_size)),
@@ -151,7 +162,7 @@ def get_transform(dataset, transform_list, transform_on_gpu=False):
         ]
     )
 
-    return train_transform, test_transform, cpu_transform, test_gpu_transform, n_classes
+    return train_transform, test_transform, cpu_transform, test_gpu_transform, future_train_transform, n_classes
 
 
 def select_autoaugment(dataset):

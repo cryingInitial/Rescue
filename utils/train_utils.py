@@ -18,6 +18,22 @@ from utils.my_augment import Kornia_Randaugment
 from torchvision import transforms
 from tqdm import tqdm
 from models.cifar import resnet18
+from models.cifar_moco import resnet18_moco
+
+# utils
+@torch.no_grad()
+def concat_all_gather(tensor):
+    """
+    Performs all_gather operation on the provided tensors.
+    *** Warning ***: torch.distributed.all_gather has no gradient.
+    """
+    tensors_gather = [
+        torch.ones_like(tensor) for _ in range(torch.distributed.get_world_size())
+    ]
+    torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
+
+    output = torch.cat(tensors_gather, dim=0)
+    return output
 
 def cycle(iterable):
     # iterate with shuffling
@@ -713,61 +729,11 @@ def get_data_loader(opt_dict, dataset, pre_train=False):
 
     return train_loader, test_loader
 
-def select_model(model_name, dataset, num_classes=None, opt_dict=None, pre_trained=False, G=False, F=False):
-    '''
-    model_imagenet = False
-    opt = edict(
-        {
-            "depth": 18,
-            "num_classes": num_classes,
-            "in_channels": 3,
-            "bn": True,
-            "normtype": "BatchNorm",
-            "activetype": "ReLU",
-            "pooltype": "MaxPool2d",
-            "preact": False,
-            "affine_bn": True,
-            "bn_eps": 1e-6,
-            "compression": 0.5,
-        }
-    )
+def select_moco_model(model_name, dataset, num_classes=None, opt_dict=None, pre_trained=False, G=False, F=False, Neck = False, K = 4096, dim=182):
+    return resnet18_moco(pretrained=pre_trained, dataset=False, progress=True, F=False, G=False, Neck = Neck, K=K, dim=dim)
 
-    if "mnist" in dataset:
-        model_class = getattr(mnist, "MLP")
-    elif "cifar" in dataset:
-        # for imagenet model 사용 in cifar
-        # model_imagenet=True
-        model_class = getattr(cifar, "ResNet")
-    elif "imagenet" in dataset:
-        #model_class = getattr(imagenet, "ResNet")
-        model_imagenet=True
-        model_class = getattr(cifar, "ResNet")
-    else:
-        raise NotImplementedError(
-            "Please select the appropriate datasets (mnist, cifar10, cifar100, imagenet)"
-        )
-    if model_name == "resnet18":
-        opt["depth"] = 18
-    elif model_name == "resnet32":
-        opt["depth"] = 32
-    elif model_name == "resnet34":
-        opt["depth"] = 34
-    elif model_name == "mlp400":
-        opt["width"] = 400
-    else:
-        raise NotImplementedError(
-            "Please choose the model name in [resnet18, resnet32, resnet34]"
-        )
-
-    model = model_class(opt, model_imagenet)
-
-    # TODO initial check
-    initial = False
-
-    if opt_dict is not None:
-        model = load_initial_checkpoint(pre_dataset, model, opt_dict["device"], load_cp_path = path_load_cp)
-    ''' 
-    return resnet18(pretrained=pre_trained, dataset=dataset,  F=False, G=False)
+def select_model(model_name, dataset, num_classes=None, opt_dict=None, pre_trained=False, G=False, F=False, Neck = False):
+    return resnet18(pretrained=pre_trained, dataset=False, progress=True, F=False, G=False, Neck = Neck)
 
 ##### for ASER #####
 def compute_knn_sv(model, eval_x, eval_y, cand_x, cand_y, k, device="cpu"):

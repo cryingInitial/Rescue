@@ -49,7 +49,7 @@ def main():
     random.seed(args.rnd_seed)
 
     # get datalist
-    train_datalist, cls_dict, cls_addition = get_train_datalist(args.dataset, args.sigma, args.repeat, args.init_cls, args.rnd_seed)
+    train_datalist, cls_dict, cls_addition, cls_order, future_train_dict_k5, future_train_dict_k10, future_train_dict_k20, future_train_dict_k100 = get_train_datalist(args.dataset, args.sigma, args.repeat, args.init_cls, args.rnd_seed)
     test_datalist = get_test_datalist(args.dataset)
     samples_cnt = 0
     # Reduce datalist in Debug mode
@@ -69,6 +69,15 @@ def main():
         
         train_datalist = new_train_datalist
         args.samples_per_task = args.samples_per_task * 2
+
+    if args.num_k_shot==5:
+        future_train_dict = future_train_dict_k5
+    elif args.num_k_shot==10:
+        future_train_dict = future_train_dict_k10
+    elif args.num_k_shot==20:
+        future_train_dict = future_train_dict_k20
+    elif args.num_k_shot==100:
+        future_train_dict = future_train_dict_k100   
         
     logger.info(f"Select a CIL method ({args.mode})")
     method = select_method(args, train_datalist, test_datalist, device)
@@ -95,7 +104,7 @@ def main():
         method.online_step(data, samples_cnt, args.n_worker)
         if samples_cnt % args.eval_period == 0:
             eval_dict = method.online_evaluate(test_datalist, samples_cnt, 512, args.n_worker, cls_dict,
-                                               cls_addition, data["time"])
+                                               cls_addition, cls_order, future_train_dict, data["time"])
             eval_results["test_acc"].append(eval_dict['avg_acc'])
             #eval_results["percls_acc"].append(eval_dict['cls_acc'])
             eval_results["data_cnt"].append(samples_cnt)

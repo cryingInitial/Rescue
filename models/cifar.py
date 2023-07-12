@@ -203,8 +203,8 @@ class Bottleneck(nn.Module):
 
         return out
 
-def _resnet(arch, block, layers, pretrained, progress, dataset=False, G=False, F=False, **kwargs):
-    model = ResNet(block, layers, **kwargs)
+def _resnet(arch, block, layers, pretrained, progress, dataset=False, G=False, F=False, Neck = False, **kwargs):
+    model = ResNet(block, layers, Neck, **kwargs)
 
     if pretrained:
         if G:
@@ -233,13 +233,13 @@ def _resnet(arch, block, layers, pretrained, progress, dataset=False, G=False, F
 
     return model
 
-def resnet18(pretrained=False, progress=True, dataset=False, G=False, F=False, **kwargs):
-    return _resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress, dataset=dataset, G=G, F=F, **kwargs)
+def resnet18(pretrained=False, progress=True, dataset=False, G=False, F=False, Neck=False, **kwargs):
+    return _resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress, dataset=dataset, G=G, F=F, Neck = Neck, **kwargs)
 
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
+    def __init__(self, block, layers, Neck=False, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None):
         super(ResNet, self).__init__()
@@ -257,7 +257,11 @@ class ResNet(nn.Module):
         if len(replace_stride_with_dilation) != 3:
             raise ValueError("replace_stride_with_dilation should be None "
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
-        # self.neck = MLPFFNNeck(in_channels = 512, out_channels=512)
+        
+        # neck layer forward or not
+        self.neck_forward = Neck
+        
+        self.neck = MLPFFNNeck(in_channels = 512, out_channels=512)
         self.groups = groups
         self.base_width = width_per_group
         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
@@ -338,8 +342,9 @@ class ResNet(nn.Module):
 
         feature = self.avgpool(out4)
 
-        # neck layer
-        #x = self.neck(x)
+        if self.neck_forward:
+            # neck layer
+            feature = self.neck(feature)
 
         feature = torch.flatten(feature, 1)
         out = self.fc(feature)

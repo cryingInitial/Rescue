@@ -35,7 +35,7 @@ class CLManagerBase:
         self.sigma = kwargs["sigma"]
         self.repeat = kwargs["repeat"]
         self.init_cls = kwargs["init_cls"]
-        
+        self.use_residual = kwargs["use_residual"]
         self.memory_size = kwargs["memory_size"]
         self.online_iter = kwargs["online_iter"]
         self.std_dict = {}
@@ -54,9 +54,8 @@ class CLManagerBase:
         self.memory_batch_size = self.batch_size - self.temp_batch_size
         self.memory_size -= self.temp_batch_size
         self.transforms = kwargs["transforms"]
-
+        self.num_future_class = kwargs["num_future_class"]
         self.criterion = nn.CrossEntropyLoss(reduction="mean").to(self.device)
-
         self.data_dir = kwargs["data_dir"]
         if self.data_dir is None:
             self.data_dir = os.path.join("dataset", self.dataset)
@@ -65,12 +64,12 @@ class CLManagerBase:
         self.transform_on_gpu = kwargs["transform_on_gpu"]
         self.use_kornia = kwargs["use_kornia"]
         self.transform_on_worker = kwargs["transform_on_worker"]
-        self.use_synthetic_regularization = kwargs["use_synthetic_regularization"]
         self.eval_period = kwargs["eval_period"]
         self.topk = kwargs["topk"]
         self.f_period = kwargs["f_period"]
-        self.ood_strategy = kwargs["ood_strategy"]
         self.use_amp = kwargs["use_amp"]
+        self.future_training_iterations = kwargs["future_training_iterations"]
+        self.use_future_eval = kwargs["use_future_eval"]
         if self.use_amp:
             self.scaler = torch.cuda.amp.GradScaler()
 
@@ -79,7 +78,7 @@ class CLManagerBase:
         self.cls_dict = {}
         self.total_samples = len(self.train_datalist)
         
-        self.train_transform, self.test_transform, self.cpu_transform, self.test_gpu_transform, self.n_classes = get_transform(self.dataset, self.transforms, self.transform_on_gpu)
+        self.train_transform, self.test_transform, self.cpu_transform, self.test_gpu_transform, self.future_train_transform, self.n_classes = get_transform(self.dataset, self.transforms, self.transform_on_gpu)
         self.cutmix = "cutmix" in kwargs["transforms"]
 
         self.model = select_model(self.model_name, self.dataset, pre_trained=True ).to(self.device)
@@ -91,7 +90,7 @@ class CLManagerBase:
         self.data_stream = iter(self.train_datalist)
         self.dataloader = MultiProcessLoader(self.n_worker, self.cls_dict, self.train_transform, self.data_dir, self.transform_on_gpu, self.cpu_transform, self.device, self.use_kornia, self.transform_on_worker)
         self.memory_dataloader = MultiProcessLoader(self.n_worker, self.cls_dict, self.train_transform, self.data_dir, self.transform_on_gpu, self.cpu_transform, self.device, self.use_kornia, self.transform_on_worker)
-        self.memory = MemoryBase(self.memory_size, self.device, self.ood_strategy)
+        self.memory = MemoryBase(self.memory_size, self.device)
         self.memory_list = []
         self.temp_batch = []
         self.temp_future_batch = []
@@ -299,11 +298,6 @@ class CLManagerBase:
                 _, feature = self.model(x[i * batchsize:min((i + 1) * batchsize, len(x))], get_feature=True)
                 features.append(feature)
             
-            if self.ood_strategy != "none" and self.use_synthetic_regularization:
-                for i in range(len(new_x) // batchsize + 1):
-                    _, feature = self.model(new_x[i * batchsize:min((i + 1) * batchsize, len(new_x))], get_feature=True)
-                    features.append(feature)
-                y = torch.cat([y, new_y])
             #self.model(torch.cat(x[i * batchsize:min((i + 1) * batchsize, len(x))]).to(self.device)) for i in range(512 // batchsize))], dim=0) 
             #_, features = self.model(x, get_feature=True)
             features = torch.cat(features,dim=0)
@@ -431,6 +425,20 @@ class CLManagerBase:
                 f"Class_Acc | Sample # {sample_num} | cls{idx} {acc:.4f}"
             )            
 
+    def report_future_test(self, sample_num, avg_loss, avg_acc, cls_acc):
+        print("future_cls_acc")
+        print(cls_acc)
+        #writer.add_scalar(f"test/loss", avg_loss, sample_num)
+        #writer.add_scalar(f"test/acc", avg_acc, sample_num)
+        logger.info(
+            f"Future Test | Sample # {sample_num} | test_acc {avg_acc:.4f} | TFLOPs {self.total_flops/1000:.2f}"
+        )
+        for idx in range(self.num_future_class):
+            acc = cls_acc[self.num_learned_class + idx]
+            logger.info(
+                f"Class_Acc | Sample # {sample_num} | cls{self.num_learned_class + idx} {acc:.4f}"
+            )
+
     def update_schedule(self, reset=False):
         if reset:
             self.scheduler = select_scheduler(self.sched_name, self.optimizer)
@@ -440,7 +448,7 @@ class CLManagerBase:
             self.scheduler.step()
 
 
-    def online_evaluate(self, test_list, sample_num, batch_size, n_worker, cls_dict, cls_addition, data_time):
+    def online_evaluate(self, test_list, sample_num, batch_size, n_worker, cls_dict, cls_addition, cls_order, future_train_dict, data_time):
         if self.added:
             test_df = pd.DataFrame(test_list)
             exp_test_df = test_df[test_df['klass'].isin(self.exposed_classes)]
@@ -458,12 +466,57 @@ class CLManagerBase:
                 batch_size=batch_size,
                 num_workers=n_worker,
             )
+            
+            if self.use_future_eval:
+                if len(cls_order) - len(self.exposed_classes) <= self.num_future_class:
+                    self.future_train_loader = None
+                    self.future_test_loader = None
+                    
+                else:
+                    future_test_cls = cls_order[len(self.exposed_classes) : len(self.exposed_classes) + self.num_future_class]
+                    ### make future_train_loader ###
+                    future_train_list = []
+                    for test_cls in future_test_cls:
+                        future_train_list.extend(future_train_dict[test_cls])
+                    
+                    future_train_dataset = ImageDataset(
+                        pd.DataFrame(future_train_list),
+                        dataset=self.dataset,
+                        transform=self.future_train_transform,
+                        cls_list=self.exposed_classes+future_test_cls,
+                        data_dir=self.data_dir
+                    )
+                    self.future_train_loader = DataLoader(
+                        future_train_dataset,
+                        shuffle=True,
+                        batch_size=batch_size,
+                        num_workers=n_worker,
+                    )
+                    
+                    ### make future_test_loader ###
+                    future_test_df = pd.DataFrame(test_list)
+                    exp_future_test_df = future_test_df[future_test_df['klass'].isin(future_test_cls)]
+                    print("exp_future_test_df", len(exp_future_test_df))
+                    future_test_dataset = ImageDataset(
+                        exp_future_test_df,
+                        dataset=self.dataset,
+                        transform=self.test_transform,
+                        cls_list=self.exposed_classes + future_test_cls,
+                        data_dir=self.data_dir
+                    )
+                    self.future_test_loader = DataLoader(
+                        future_test_dataset,
+                        shuffle=True,
+                        batch_size=batch_size,
+                        num_workers=n_worker,
+                    )
+
+                    future_eval_dict = self.future_evaluation()
+                    self.report_future_test(sample_num, future_eval_dict["avg_loss"], future_eval_dict["avg_acc"], future_eval_dict["cls_acc"])              
+                    
         eval_dict = self.evaluation(self.test_loader, self.criterion)
         self.report_test(sample_num, eval_dict["avg_loss"], eval_dict["avg_acc"], eval_dict["cls_acc"])
-
-        if sample_num >= self.f_next_time:
-            self.get_forgetting(sample_num, test_list, cls_dict, batch_size, n_worker)
-            self.f_next_time += self.f_period
+        
         self.added = False
         return eval_dict
 
@@ -740,6 +793,69 @@ class CLManagerBase:
         knowledge_gain_rate = knowledge_gain/(max_knowledge-prev_total_knowledge)
         return knowledge_loss_rate, knowledge_gain_rate
 
+    def future_evaluation(self):
+        
+        total_correct, total_num_data, total_loss = 0.0, 0.0, 0.0
+        correct_l = torch.zeros(self.n_classes)
+        num_data_l = torch.zeros(self.n_classes)
+        
+        # k-shot training temp_model using future data
+        temp_model = copy.deepcopy(self.model)
+        temp_model.train()
+        for name, param in temp_model.named_parameters():
+            if 'fc' not in name:
+                param.requires_grad = False
+        
+        for i in range(self.future_training_iterations):
+            for i, data in enumerate(self.future_train_loader):
+                x = data["image"].to(self.device)
+                y = data["label"].to(self.device)
+                
+                self.optimizer.zero_grad()
+
+                # logit can not be used anymore
+                with torch.cuda.amp.autocast(self.use_amp):
+                    logit, feature = temp_model(x, get_feature=True)
+                    loss = self.criterion(logit, y)
+                
+                if self.use_amp:
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    self.optimizer.step()
+
+        # for calculating forward transfer
+        for i, data in enumerate(self.future_test_loader):
+            x = data["image"]
+            y = data["label"]
+            x = x.to(self.device)
+            y = y.to(self.device)
+
+            logit, _ = temp_model(x)
+
+            loss = self.criterion(logit, y)
+            pred = torch.argmax(logit, dim=-1)
+            _, preds = logit.topk(self.topk, 1, True, True)
+
+            total_correct += torch.sum(preds == y.unsqueeze(1)).item()
+            total_num_data += y.size(0)
+
+            xlabel_cnt, correct_xlabel_cnt = self._interpret_pred(y, pred)
+            correct_l += correct_xlabel_cnt.detach().cpu()
+            num_data_l += xlabel_cnt.detach().cpu()
+
+            total_loss += loss.item()
+            label += y.tolist()
+
+        avg_acc = total_correct / total_num_data
+        avg_loss = total_loss / len(self.future_test_loader)
+        cls_acc = (correct_l / (num_data_l + 1e-5)).numpy().tolist()
+        ret = {"avg_loss": avg_loss, "avg_acc": avg_acc, "cls_acc": cls_acc}
+        
+        return ret
+
     def get_flops_parameter(self):
         _, _, _, inp_size, inp_channel = get_statistics(dataset=self.dataset)
         [forward_mac, backward_mac, params, fc_params, buffers], \
@@ -872,6 +988,7 @@ class MemoryBase:
         self.class_usage_count = np.append(self.class_usage_count, 0.0)
         print("!!added", class_name)
         print("self.cls_dict", self.cls_dict)
+
 
     def whole_retrieval(self):
         memory_batch = []
