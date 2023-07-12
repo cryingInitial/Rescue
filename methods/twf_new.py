@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from methods.er_new import ER
 from utils.data_loader import get_statistics, partial_distill_loss
-from utils.train_utils import get_data_loader, select_model
+from utils.train_utils import get_data_loader, select_model, select_optimizer, select_scheduler
 from utils.afd import MultiTaskAFDAlternative
 from utils.data_loader import cutmix_data
 # from methods.cl_manager import MemoryBase
@@ -82,9 +82,10 @@ class TWF(ER):
     
     def generate_waiting_batch(self, iterations):
         for i in range(iterations):
+            self.waiting_batch_idx.append(self.temp_future_batch_idx)
             self.waiting_batch.append(self.temp_future_batch)
-            
-            
+
+    
     def memory_future_step(self):
         try:
             sample = next(self.data_stream)
@@ -98,6 +99,7 @@ class TWF(ER):
             self.memory.add_new_class(sample["klass"])
             self.dataloader.add_new_class(self.memory.cls_dict)
         self.temp_future_batch.append(sample)
+        self.temp_future_batch_idx.append(self.future_sample_num)
         self.future_num_updates += self.online_iter
 
         if len(self.temp_future_batch) >= self.temp_batch_size:
@@ -114,9 +116,11 @@ class TWF(ER):
         
         # Teacher model
         self.model = select_model(self.model_name, self.dataset, pre_trained=True).to(self.device)
-        self.model.fc = nn.Linear(self.model.fc.in_features, self.n_classes).to(self.device)
+        # self.model.fc = nn.Linear(self.model.fc.in_features, self.n_classes).to(self.device)
         self.pretrained_model = copy.deepcopy(self.model.eval()) 
         self.pretrained_model = self.pretrained_model.to(self.device)
+        self.optimizer = select_optimizer(self.opt_name, self.lr, self.model)
+        self.scheduler = select_scheduler(self.sched_name, self.optimizer)
        
         for p in self.pretrained_model.parameters():
             p.requires_grad = False
@@ -182,25 +186,25 @@ class TWF(ER):
         self.cls_dict[class_name] = len(self.exposed_classes)
         self.exposed_classes.append(class_name)
         self.num_learned_class = len(self.exposed_classes)
-        # prev_weight = copy.deepcopy(self.model.fc.weight.data)
-        # prev_bias = copy.deepcopy(self.model.fc.bias.data)
-        # # pret_prev_weight = copy.deepcopy(self.model.fc.weight.data)
-        # # pret_prev_bias = copy.deepcopy(self.model.fc.bias.data)
-        # self.model.fc = nn.Linear(self.model.fc.in_features, self.num_learned_class).to(self.device)
-        # # self.pretrained_model.fc = nn.Linear(self.model.fc.in_features, self.num_learned_class).to(self.device)
-        # with torch.no_grad():
-        #     if self.num_learned_class > 1:
-        #         self.model.fc.weight[:self.num_learned_class - 1] = prev_weight
-        #         self.model.fc.bias[:self.num_learned_class - 1] = prev_bias
+        prev_weight = copy.deepcopy(self.model.fc.weight.data)
+        prev_bias = copy.deepcopy(self.model.fc.bias.data)
+        # pret_prev_weight = copy.deepcopy(self.model.fc.weight.data)
+        # pret_prev_bias = copy.deepcopy(self.model.fc.bias.data)
+        self.model.fc = nn.Linear(self.model.fc.in_features, self.num_learned_class).to(self.device)
+        # self.pretrained_model.fc = nn.Linear(self.model.fc.in_features, self.num_learned_class).to(self.device)
+        with torch.no_grad():
+            if self.num_learned_class > 1:
+                self.model.fc.weight[:self.num_learned_class - 1] = prev_weight
+                self.model.fc.bias[:self.num_learned_class - 1] = prev_bias
                 # self.pretrained_model.fc.weight[:self.num_learned_class - 1] = pret_prev_weight
                 # self.pretrained_model.fc.bias[:self.num_learned_class - 1] = pret_prev_bias
-        # for param in self.optimizer.param_groups[1]['params']:
-        #     if param in self.optimizer.state.keys():
-        #         del self.optimizer.state[param]
+        for param in self.optimizer.param_groups[1]['params']:
+            if param in self.optimizer.state.keys():
+                del self.optimizer.state[param]
         del self.optimizer.param_groups[1]
         self.optimizer.add_param_group({'params': self.model.fc.parameters()})
-        # if 'reset' in self.sched_name:
-        #     self.update_schedule(reset=True)
+        if 'reset' in self.sched_name:
+            self.update_schedule(reset=True)
     
     def model_forward(self, x, y, get_feature=False, get_features=False):
         #do_cutmix = self.cutmix and np.random.rand(1) < 0.5
@@ -295,10 +299,10 @@ class TWF(ER):
                 # buf_logit = buf_logit.to(self.device)
                 memory_task_ids = [item['task_id'] for item in memory_data]
                 memory_attentionmaps = [[attention_map.to(self.device) for attention_map in item['attention_maps']] for item in memory_data]
+                # print("BEFORE", memory_attentionmaps, "LENTH", len(memory_attentionmaps[0]))
                 memory_logits = [item['logits'].to(self.device) for item in memory_data]
                 memory_classes = [item['cls'] for item in memory_data]
                 memory_labels = [item['label'] for item in memory_data]
-    
                 buffer_teacher_forcing = [task_ids != self.future_task_id for task_ids in memory_task_ids]
                 buffer_teacher_forcing = torch.tensor(buffer_teacher_forcing).to(self.device)
                 teacher_forcing = torch.cat(
@@ -306,31 +310,34 @@ class TWF(ER):
                 attention_maps = [
                     [torch.ones_like(map) for map in memory_attentionmaps[0]]]*self.temp_batch_size + memory_attentionmaps
                 
-                
+                # print("teacher", teacher_forcing)
                 loss_afd, all_attention_maps = partial_distill_loss(self.model, all_features, all_pret_features, y, all_task_ids, self.device,
                     teacher_forcing, attention_maps)
+                # print("AFTER", all_attention_maps, "LENTH", len(all_attention_maps[0]), len(all_attention_maps))
+                # for i in range(len(all_attention_maps)):
+                    # print("i", len(all_attention_maps[i]))
                 # loss_afd.to(self.device)
 
                 stream_attention_maps = [ap[:self.temp_batch_size] for ap in all_attention_maps]
-                
+                # print("AFTER", all_attention_maps)
                 memory_logits = torch.stack(memory_logits)
                 memory_labels = torch.stack(memory_labels).to(self.device)
                 
                 loss_er = self.loss(memory_logits, memory_labels)
-                loss_der = F.mse_loss(buf_logit, memory_logits)
+                # loss_der = F.mse_loss(buf_logit, memory_logits)
                 
-                # for i in range(len(memory_logits)):
-                #     length = memory_classes[i]
-                #     # resize to make equal # of class conditions
-                #     buf_logit_seg = buf_logit[i][:length]
-                #     memory_logit_seg = memory_logits[i][:length]
+                for i in range(len(memory_logits)):
+                    length = memory_classes[i]
+                    # resize to make equal # of class conditions
+                    buf_logit_seg = buf_logit[i][:length]
+                    memory_logit_seg = memory_logits[i][:length]
                     
-                #     # substract mean
-                #     # buf_logit_seg = (buf_logit_seg - torch.mean(buf_logit_seg, dim=0))
-                #     # memory_logit_seg = (memory_logit_seg - torch.mean(memory_logit_seg, dim=0))
+                    # substract mean
+                    # buf_logit_seg = (buf_logit_seg - torch.mean(buf_logit_seg, dim=0))
+                    # memory_logit_seg = (memory_logit_seg - torch.mean(memory_logit_seg, dim=0))
                     
-                #     # add per logit
-                #     loss_der += F.mse_loss(buf_logit_seg, memory_logit_seg).cpu()
+                    # add per logit
+                    loss_der += F.mse_loss(buf_logit_seg, memory_logit_seg).cpu()
                 
                 
             # stream_y = torch.tensor(y[:self.temp_batch_size]).clone().detach()
@@ -340,6 +347,7 @@ class TWF(ER):
             loss += self.kwargs['der_beta'] * loss_er
             loss += self.kwargs['der_alpha'] * loss_der
             loss += self.kwargs['lambda_fp'] * loss_afd
+            print("AFD", loss_afd)
 
             _, preds = logit.topk(self.topk, 1, True, True)
 
@@ -361,8 +369,8 @@ class TWF(ER):
         stream_logit = [logit.detach().cpu()  for logit in stream_logit]
         stream_attention_maps = [attention_map.detach().cpu() for attention_map in stream_attention_maps]
         
-        # for i in range(len(stream_logit)):
-        #     stream_logit[i] = nn.functional.pad(stream_logit[i], (0, 100 - stream_logit[i].shape[0]), mode='constant', value=0)
+        for i in range(len(stream_logit)):
+            stream_logit[i] = nn.functional.pad(stream_logit[i], (0, 100 - stream_logit[i].shape[0]), mode='constant', value=0)
         
         x = x.detach().cpu()
         y = y.detach().cpu()

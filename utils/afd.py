@@ -447,20 +447,20 @@ class MultiTaskAFDAlternative(nn.Module):
         self.norm = Normalize()
         self.diverse_loss = DiverseLoss(lambda_diverse_loss)
 
-    def get_tasks_id(self, targets):
-        if 'ablation_type' in os.environ and os.environ['ablation_type'] == 'non_cond':
-            return torch.zeros_like(targets)
-        return torch.div(targets, self.cpt, rounding_mode='floor')
+    # def get_tasks_id(self, targets):
+    #     if 'ablation_type' in os.environ and os.environ['ablation_type'] == 'non_cond':
+    #         return torch.zeros_like(targets)
+    #     return torch.div(targets, self.cpt, rounding_mode='floor')
+    
 
     def extend_like(self, teacher_forcing, y):
         dest_shape = (-1,) + (1,) * (len(y.shape) - 1)
         return teacher_forcing.view(dest_shape).expand(y.shape)
 
-    def forward(self, fm_s, fm_t, targets, teacher_forcing, attention_map):
+    def forward(self, fm_s, fm_t, targets, task_ids, teacher_forcing, attention_map):
+        assert len(task_ids) == len(fm_s) == len(fm_t) == len(teacher_forcing) == len(attention_map)
 
-        assert len(targets) == len(fm_s) == len(fm_t) == len(teacher_forcing) == len(attention_map)
-
-        output_rho, logits = self.attn_fn(fm_t, self.get_tasks_id(targets))
+        output_rho, logits = self.attn_fn(fm_t, task_ids)
 
         rho = output_rho
         loss = .0
@@ -470,6 +470,8 @@ class MultiTaskAFDAlternative(nn.Module):
                 if self.resize_maps:
                     attention_map = self.attn_fn.upsample(attention_map, fm_t.shape[1:])
                 p1 = torch.max(attention_map, output_rho) if self.teacher_forcing_or else attention_map
+                print("teacher_forcing", len(teacher_forcing[0].shape))
+                print("attention", len(attention_map[0].shape))
                 rho = torch.where(self.extend_like(teacher_forcing, attention_map), p1, output_rho)
             else:
                 rho = output_rho

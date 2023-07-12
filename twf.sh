@@ -44,7 +44,7 @@ fi
 
 for RND_SEED in $SEEDS
 do
-    CUDA_VISIBLE_DEVICES=6 python main_new.py --mode $MODE \
+    CUDA_VISIBLE_DEVICES=2 python main_new.py --mode $MODE \
     --dataset $DATASET \
     --sigma $SIGMA --repeat $REPEAT --init_cls $INIT_CLS\
     --rnd_seed $RND_SEED --samples_per_task $SAMPLES_PER_TASK \
