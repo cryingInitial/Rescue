@@ -35,21 +35,6 @@ class SCR(ER):
         
     
     def initialize_future(self):
-        self.cpu_transform = None
-        self.train_transform = transforms.Compose(
-            [
-                transforms.Resize((224, 224)),
-                transforms.RandomCrop(224, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor()
-            ]
-        )
-        self.test_transform = transforms.Compose(
-            [
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-            ]
-        )
         self.data_stream = iter(self.train_datalist)
         self.dataloader = MultiProcessLoader(self.n_worker, self.cls_dict, self.train_transform, self.data_dir, self.transform_on_gpu, self.cpu_transform, self.device, self.use_kornia, self.transform_on_worker)
         self.memory = SCRMemory(self.data_dir, self.train_transform, self.memory_size, self.device)
@@ -71,8 +56,6 @@ class SCR(ER):
         self.waiting_batch = []
         for _ in range(self.future_steps):
             self.load_batch()
-
-        
         
     def online_train(self, iterations=1):
         total_loss, correct, num_data = 0.0, 0.0, 0.0
@@ -134,7 +117,7 @@ class SCR(ER):
             features = []
             for ex in exemplar:
                 ex = ex.to(self.device)
-                feature = self.model(ex.unsqueeze(0), get_feature=True)[1].detach().clone()
+                feature = F.normalize(self.model(ex.unsqueeze(0), get_feature=True)[1], dim=1).detach().clone()
                 feature = feature.squeeze()
                 feature.data = feature.data / feature.data.norm()  # Normalize
                 features.append(feature)
@@ -153,6 +136,7 @@ class SCR(ER):
                 x = x.to(self.device)
                 y = y.to(self.device)
                 _, feature = self.model(x, get_feature=True)
+                feature = F.normalize(feature, dim=1)
                 for j in range(feature.size(0)):
                     feature.data[j] = feature.data[j] / feature.data[j].norm()
                 feature = feature.unsqueeze(2)

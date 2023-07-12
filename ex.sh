@@ -82,6 +82,11 @@ else
     exit 1
 fi
 
+if [ "$MODE" == "ocs" ]; then
+    BATCHSIZE=$((2*BATCHSIZE))
+    EVAL_PERIOD=$((2*EVAL_PERIOD))
+fi
+
 for RND_SEED in $SEEDS
 do
     CUDA_VISIBLE_DEVICES=0 nohup python main_new.py --mode $MODE --residual_strategy $RESIDUAL_STRATEGY $USE_NECK_FORWARD --moco_coeff $MOCO_COEFF \

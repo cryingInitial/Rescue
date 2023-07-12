@@ -81,8 +81,7 @@ class CLManagerBase:
         self.train_transform, self.test_transform, self.cpu_transform, self.test_gpu_transform, self.future_train_transform, self.n_classes = get_transform(self.dataset, self.transforms, self.transform_on_gpu)
         self.cutmix = "cutmix" in kwargs["transforms"]
 
-        self.model = select_model(self.model_name, self.dataset, 1,).to(self.device)
-        # self.model = select_model(self.model_name, self.dataset, 1, pre_trained=True).to(self.device)
+        self.model = select_model(self.model_name, self.dataset, pre_trained=True ).to(self.device)
         print("model")
         print(self.model)
         self.optimizer = select_optimizer(self.opt_name, self.lr, self.model)
@@ -230,7 +229,7 @@ class CLManagerBase:
             memory_batch, memory_batch_idx = self.memory.retrieval(self.memory_batch_size)
             self.waiting_batch.append(self.temp_future_batch + memory_batch)
             self.waiting_batch_idx.append(self.temp_future_batch_idx + memory_batch_idx)
-
+        
     def online_step(self, sample, sample_num, n_worker):
         self.sample_num = sample_num
         if sample['klass'] not in self.exposed_classes:
