@@ -483,7 +483,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 x = x.to(self.device)
                 y = y.to(self.device)
 
-                _, features = self.model(x, get_feature=True)
+                _, features = temp_model(x, get_feature=True)
                 features = self.pre_logits(features)
 
                 if self.use_residual:
@@ -518,7 +518,7 @@ class ETF_ER_RESMEM_VER3(CLManagerBase):
                 with torch.no_grad():
                     cls_score = features @ self.etf_vec
                     pred = torch.argmax(cls_score, dim=-1)
-                    _, correct_count = self.compute_accuracy(cls_score[:, :len(self.memory.cls_list)], y)
+                    _, correct_count = self.compute_accuracy(cls_score[:, :len(self.memory.cls_list) + self.num_future_class], y)
                     total_correct += correct_count
 
                     total_loss += loss.item()
