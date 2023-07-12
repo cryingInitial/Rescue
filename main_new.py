@@ -90,7 +90,7 @@ def main():
         samples_cnt += 1
         method.online_step(data, samples_cnt, args.n_worker)
         if samples_cnt % args.eval_period == 0:
-            eval_dict = method.online_evaluate(test_datalist, samples_cnt, 512, args.n_worker, cls_dict,
+            eval_dict = method.online_evaluate(test_datalist, samples_cnt, 500, args.n_worker, cls_dict,
                                                cls_addition, cls_order, future_train_dict, data["time"])
             eval_results["test_acc"].append(eval_dict['avg_acc'])
             #eval_results["percls_acc"].append(eval_dict['cls_acc'])
