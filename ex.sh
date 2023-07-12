@@ -1,8 +1,9 @@
 #/bin/bash
 
 # CIL CONFIG
-NOTE="remind_debug_pretrained_testtransform"
-MODE="remind"
+NOTE="twf_debug"
+# remind_iterationdebug_pretrained_it1
+MODE="twf"
 K_COEFF="4"
 TEMPERATURE="0.125"
 TRANSFORM_ON_GPU="--transform_on_gpu"
@@ -22,7 +23,7 @@ SOFTMAX_TEMPERATURE=1.0
 
 KNN_SIGMA=0.9
 RESIDUAL_NUM=50
-DATASET="cifar10" # cifar10, cifar100, tinyimagenet, imagenet
+DATASET="cifar100" # cifar10, cifar100, tinyimagenet, imagenet
 ONLINE_ITER=1
 SIGMA=0
 REPEAT=1
@@ -36,7 +37,7 @@ MOCO_COEFF=0.01
 NUM_K_SHOT=20
 FUTURE_TRAINING_ITERATIONS=10
 
-REMIND_MEM_SIZE=980 #39170
+REMIND_MEM_SIZE=980 #3917
 BASEINITCLS_NUM=2 # 10
 
 # Neck Layer Including
@@ -96,9 +97,9 @@ fi
 
 for RND_SEED in $SEEDS
 do
-    CUDA_VISIBLE_DEVICES=0 python main_new.py --mode $MODE --residual_strategy $RESIDUAL_STRATEGY $USE_NECK_FORWARD --moco_coeff $MOCO_COEFF \
+    CUDA_VISIBLE_DEVICES=3 python main_new.py --mode $MODE --residual_strategy $RESIDUAL_STRATEGY $USE_NECK_FORWARD --moco_coeff $MOCO_COEFF \
     --dataset $DATASET --unfreeze_rate $UNFREEZE_RATE $USE_KORNIA --k_coeff $K_COEFF --temperature $TEMPERATURE --scl_coeff $SCL_COEFF --future_training_iterations $FUTURE_TRAINING_ITERATIONS \
-    --sigma $SIGMA --repeat $REPEAT --init_cls $INIT_CLS --samples_per_task 20000 --residual_num $RESIDUAL_NUM $USE_FUTURE_EVAL \
+    --sigma $SIGMA --repeat $REPEAT --init_cls $INIT_CLS --samples_per_task 10000 --residual_num $RESIDUAL_NUM $USE_FUTURE_EVAL \
     --rnd_seed $RND_SEED --val_memory_size $VAL_SIZE --num_eval_class $NUM_EVAL_CLASS --num_class $NUM_CLASS --num_k_shot $NUM_K_SHOT \
     --model_name $MODEL_NAME --opt_name $OPT_NAME --sched_name $SCHED_NAME --softmax_temperature $SOFTMAX_TEMPERATURE --num_future_class $NUM_FUTURE_CLASS \
     --baseinit_nclasses $BASEINITCLS_NUM --remind_memsize $REMIND_MEM_SIZE --lr $LR --batchsize $BATCHSIZE --mir_cands $MIR_CANDS $STORE_PICKLE --knn_top_k $KNN_TOP_K --select_criterion $SELECT_CRITERION $USE_RESIDUAL \
