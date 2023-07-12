@@ -828,7 +828,6 @@ class CLManagerBase:
                 
                 temp_optimizer.zero_grad()
 
-                
                 # logit can not be used anymore
                 with torch.cuda.amp.autocast(self.use_amp):
                     logit, feature = temp_model(x, get_feature=True)
@@ -842,28 +841,29 @@ class CLManagerBase:
                     loss.backward()
                     temp_optimizer.step()
 
-
+        temp_model.eval()
         # for calculating forward transfer
-        for i, data in enumerate(self.future_test_loader):
-            x = data["image"]
-            y = data["label"]
-            x = x.to(self.device)
-            y = y.to(self.device)
+        with torch.no_grad():
+            for i, data in enumerate(self.future_test_loader):
+                x = data["image"]
+                y = data["label"]
+                x = x.to(self.device)
+                y = y.to(self.device)
 
-            logit = temp_model(x)
+                logit = temp_model(x)
 
-            loss = self.criterion(logit, y)
-            pred = torch.argmax(logit, dim=-1)
-            _, preds = logit.topk(self.topk, 1, True, True)
+                loss = self.criterion(logit, y)
+                pred = torch.argmax(logit, dim=-1)
+                _, preds = logit.topk(self.topk, 1, True, True)
 
-            total_correct += torch.sum(preds == y.unsqueeze(1)).item()
-            total_num_data += y.size(0)
+                total_correct += torch.sum(preds == y.unsqueeze(1)).item()
+                total_num_data += y.size(0)
 
-            xlabel_cnt, correct_xlabel_cnt = self._interpret_pred(y, pred)
-            correct_l += correct_xlabel_cnt.detach().cpu()
-            num_data_l += xlabel_cnt.detach().cpu()
+                xlabel_cnt, correct_xlabel_cnt = self._interpret_pred(y, pred)
+                correct_l += correct_xlabel_cnt.detach().cpu()
+                num_data_l += xlabel_cnt.detach().cpu()
 
-            total_loss += loss.item()
+                total_loss += loss.item()
 
         avg_acc = total_correct / total_num_data
         avg_loss = total_loss / len(self.future_test_loader)
