@@ -155,7 +155,7 @@ class ETF_ER_RESMEM_VER8(ETF_ER_RESMEM_VER3):
                 images = image_list[i*batch_size : min((i+1)*batch_size, len(image_list))]
                 labels = label_list[i*batch_size : min((i+1)*batch_size, len(image_list))]
                 _, features = self.model(images.to(self.device))
-                features = self.pre_logits(features)
+                features = self.pre_logits(features) # added
                 target = self.etf_vec[:, labels].t()
                 residual = (target - features).detach()
 
