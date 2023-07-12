@@ -48,13 +48,10 @@ class CLManagerBase:
             self.sched_name = 'const'
         self.lr = kwargs["lr"]
         self.real_num_classes = kwargs["num_class"]
-        # assert kwargs["temp_batchsize"] <= kwargs["batchsize"]
-        # self.batch_size = kwargs["batchsize"]
-        # self.temp_batch_size = kwargs["temp_batchsize"]
-        # self.memory_batch_size = self.batch_size - self.temp_batch_size
-        self.batch_size = 21
-        self.temp_batch_size = 8
-        self.memory_batch_size = 20
+        assert kwargs["temp_batchsize"] <= kwargs["batchsize"]
+        self.batch_size = kwargs["batchsize"]
+        self.temp_batch_size = kwargs["temp_batchsize"]
+        self.memory_batch_size = self.batch_size - self.temp_batch_size
         self.memory_size -= self.temp_batch_size
         self.transforms = kwargs["transforms"]
         self.num_future_class = kwargs["num_future_class"]

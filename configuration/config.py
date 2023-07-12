@@ -254,6 +254,7 @@ def base_parser():
     parser.add_argument('--baseinit_nclasses', type=int, default=2, help='# epochs for baseinit')
     parser.add_argument('--baseinit_epochs', type=int, default=40, help='# epochs for baseinit')
     parser.add_argument('--spatial_feat_dim', type=int, default=7, help='dimension of G model output')
+    parser.add_argument('--remind_memsize', type=int, default=980, help='# epochs for baseinit')
 
 
     args = parser.parse_args()

@@ -1,7 +1,7 @@
 #/bin/bash
 
 # CIL CONFIG
-NOTE="remind_debug"
+NOTE="remind_debug_pretrained_testtransform"
 MODE="remind"
 K_COEFF="4"
 TEMPERATURE="0.125"
@@ -14,7 +14,7 @@ EVAL_N_WORKER=2
 EVAL_BATCH_SIZE=1000
 USE_KORNIA=""
 UNFREEZE_RATE=0.25
-SEEDS="3"
+SEEDS="1"
 KNN_TOP_K="15"
 SELECT_CRITERION="softmax"
 LOSS_CRITERION="DR"
@@ -24,7 +24,7 @@ KNN_SIGMA=0.9
 RESIDUAL_NUM=50
 DATASET="cifar10" # cifar10, cifar100, tinyimagenet, imagenet
 ONLINE_ITER=1
-SIGMA=10
+SIGMA=0
 REPEAT=1
 INIT_CLS=100
 USE_AMP="--use_amp"
@@ -101,7 +101,7 @@ do
     --sigma $SIGMA --repeat $REPEAT --init_cls $INIT_CLS --samples_per_task 20000 --residual_num $RESIDUAL_NUM $USE_FUTURE_EVAL \
     --rnd_seed $RND_SEED --val_memory_size $VAL_SIZE --num_eval_class $NUM_EVAL_CLASS --num_class $NUM_CLASS --num_k_shot $NUM_K_SHOT \
     --model_name $MODEL_NAME --opt_name $OPT_NAME --sched_name $SCHED_NAME --softmax_temperature $SOFTMAX_TEMPERATURE --num_future_class $NUM_FUTURE_CLASS \
-    --baseinit_nclasses $BASEINITCLS_NUM --lr $LR --batchsize $BATCHSIZE --mir_cands $MIR_CANDS $STORE_PICKLE --knn_top_k $KNN_TOP_K --select_criterion $SELECT_CRITERION $USE_RESIDUAL \
+    --baseinit_nclasses $BASEINITCLS_NUM --remind_memsize $REMIND_MEM_SIZE --lr $LR --batchsize $BATCHSIZE --mir_cands $MIR_CANDS $STORE_PICKLE --knn_top_k $KNN_TOP_K --select_criterion $SELECT_CRITERION $USE_RESIDUAL \
     --memory_size $MEM_SIZE $TRANSFORM_ON_GPU --online_iter $ONLINE_ITER --knn_sigma $KNN_SIGMA --note $NOTE --eval_period $EVAL_PERIOD --imp_update_period \
     $IMP_UPDATE_PERIOD $USE_AMP --n_worker $N_WORKER --future_steps $FUTURE_STEPS --eval_n_worker $EVAL_N_WORKER --eval_batch_size $EVAL_BATCH_SIZE &
 done
