@@ -836,12 +836,6 @@ class CLManagerBase:
                     logit, feature = temp_model(x, get_feature=True)
                     loss = self.criterion(logit, y)
                 
-                for name, param in temp_model.named_parameters():
-                    if 'fc' not in name:
-                        param.requires_grad = False
-                    else:
-                        print("before name", name, param[:5])
-
                 if self.use_amp:
                     self.scaler.scale(loss).backward()
                     self.scaler.step(temp_optimizer)
@@ -850,11 +844,6 @@ class CLManagerBase:
                     loss.backward()
                     temp_optimizer.step()
 
-                for name, param in temp_model.named_parameters():
-                    if 'fc' not in name:
-                        param.requires_grad = False
-                    else:
-                        print("after name", name, param[:5])
 
         # for calculating forward transfer
         for i, data in enumerate(self.future_test_loader):
