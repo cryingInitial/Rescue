@@ -30,19 +30,19 @@ def get_angle(a, b):
     cos = inner_product / (a_norm * b_norm)
     return cos
 
-def batch_cov(self, points):
+def batch_cov(points):
     B, D = points.size()
     mean = points.mean(dim=0)
     diffs = (points - mean)
     prods = torch.bmm(diffs.unsqueeze(2), diffs.unsqueeze(1))
     return prods
 
-def get_within_class_covariance(self, feature_dict):
+def get_within_class_covariance(feature_dict):
     # feature dimension 512로 fixed
     cov_matrix = torch.zeros(512, 512).cuda()
     total_num = 0
     for idx, klass in enumerate(list(feature_dict.keys())):
-        cov_matrix += self.batch_cov(feature_dict[klass].cuda())
+        cov_matrix += batch_cov(feature_dict[klass].cuda())
         total_num += len(feature_dict[klass])
     return cov_matrix / total_num
 '''
