@@ -13,6 +13,8 @@ from methods.er_new import ER
 
 from utils.data_loader import MultiProcessLoader
 from utils.augment import Preprocess
+from utils.autograd_hacks import add_hooks, compute_grad1, clear_backprops
+
 from torch.utils.tensorboard import SummaryWriter
 
 # [INFO] You can find important statements by searching "MILESTONE" on the log file.
@@ -22,6 +24,7 @@ writer = SummaryWriter("tensorboard")
 class OCS(ER):
     def __init__(self, train_datalist, test_datalist, device, **kwargs):
         self.n_tasks = kwargs["n_tasks"]
+        print("n_tasks", self.n_tasks)
         super().__init__(train_datalist, test_datalist, device, **kwargs)
         self.total_samples = len(train_datalist)
         self.base = 0
@@ -102,14 +105,15 @@ class OCS(ER):
                 pick = torch.randperm(len(x_stream))[:self.temp_batch_size // 2]
             else:
                 print("CORESET SAMPLING")
-                _eg = self.compute_and_flatten_example_grads(self.model, self.optimizer, x_stream, y_stream, self.task_num)
+                _eg, _ = self.compute_and_flatten_example_grads(self.model, self.optimizer, x_stream, y_stream, self.task_num)
                 _g = torch.mean(_eg, dim=0)
                 ref_grads = None
                 if len(x_memory) > 0:
-                    ref_pred = self.model(x_memory)
-                    ref_loss = self.criterion(ref_pred, y_memory)
-                    ref_loss.backward()
-                    ref_grads = copy.deepcopy(self.flatten_grads(self.model))
+                    # ref_pred = self.model(x_memory)
+                    # ref_loss = self.criterion(ref_pred, y_memory)
+                    # ref_loss.backward()
+                    # ref_grads = copy.deepcopy(self.flatten_grads(self.model))
+                    _, ref_grads = self.compute_and_flatten_example_grads(self.model, self.optimizer, x_memory, y_memory, self.task_num)
                     
                 pick = self.sample_selection(_g, _eg, ref_grads)[:self.temp_batch_size // 2]
                 
@@ -185,36 +189,63 @@ class OCS(ER):
     
     def compute_and_flatten_example_grads(self, m, criterion, data, target, task_id):
         _eg = []
-        criterion2 = nn.CrossEntropyLoss(reduction='none').to(self.device)
+        criterion2 = nn.CrossEntropyLoss().to(self.device)
         m.eval()
         m.zero_grad()
+        
+        add_hooks(m)
         pred = m(data)
-        loss = criterion2(pred, target)
-        for idx in range(len(data)):
-            loss[idx].backward(retain_graph=True)
-            _g = self.flatten_grads(m, numpy_output=True)
-            _eg.append(torch.Tensor(_g))
-            m.zero_grad()
-        return torch.stack(_eg)
+        criterion2(pred, target).backward(retain_graph=True)
+        compute_grad1(m)
+        
+        total_grads = None
+        avg_grads = None
+        for param in m.parameters():
+            try:
+                if total_grads == None:
+                    total_grads = param.grad1.detach().view(len(data), -1)
+                    avg_grads = param.grad.detach().view(-1)
+                else:
+                    total_grads = torch.cat([total_grads, param.grad1.detach().view(len(data), -1)], -1)                    
+                    avg_grads = torch.cat([avg_grads, param.grad.detach().view(-1)])
+            except:
+                pass
+                
+        return total_grads, avg_grads
+    
+    # def compute_and_flatten_example_grads(self, m, criterion, data, target, task_id):
+    #     _eg = []
+    #     criterion2 = nn.CrossEntropyLoss(reduction='none').to(self.device)
+    #     m.eval()
+    #     m.zero_grad()
+    #     pred = m(data)
+    #     loss = criterion2(pred, target)
+    #     for idx in range(len(data)):
+    #         loss[idx].backward(retain_graph=True)
+    #         _g = self.flatten_grads(m, numpy_output=True)
+    #         _eg.append(torch.Tensor(_g))
+    #         m.zero_grad()
+    #         print(_g.shape)
+    #     return torch.stack(_eg)
     
     # Extract gradients from the model
-    def flatten_grads(self, m, numpy_output=False, bias=True, only_linear=False):
-        total_grads = []
-        for name, param in m.named_parameters():
-            if only_linear:
-                if (bias or not 'bias' in name) and 'linear' in name:
-                    total_grads.append(param.grad.detach().view(-1))
-            else:
-                if (bias or not 'bias' in name) and not 'bn' in name and not 'IC' in name:
-                    try:
-                        total_grads.append(param.grad.detach().view(-1))
-                    except AttributeError:
-                        pass
-                        #print('no_grad', name)
-        total_grads = torch.cat(total_grads)
-        if numpy_output:
-            return total_grads.cpu().detach().numpy()
-        return total_grads
+    # def flatten_grads(self, m, numpy_output=False, bias=True, only_linear=False):
+    #     total_grads = []
+    #     for name, param in m.named_parameters():
+    #         if only_linear:
+    #             if (bias or not 'bias' in name) and 'linear' in name:
+    #                 total_grads.append(param.grad.detach().view(-1))
+    #         else:
+    #             if (bias or not 'bias' in name) and not 'bn' in name and not 'IC' in name:
+    #                 try:
+    #                     total_grads.append(param.grad.detach().view(-1))
+    #                 except AttributeError:
+    #                     pass
+    #                     #print('no_grad', name)
+    #     total_grads = torch.cat(total_grads)
+    #     if numpy_output:
+    #         return total_grads.cpu().detach().numpy()
+    #     return total_grads
     
     def update_memory(self, sample, sample_num):
         # only when OCS is not used
@@ -307,7 +338,7 @@ class OCSMemory(MemoryBase):
             loss = criterion(pred, labels)
             loss.backward()
             
-            _tid_eg = self.compute_and_flatten_example_grads(model, nn.CrossEntropyLoss(reduction='none'), images, labels, t)
+            _tid_eg, _ = self.compute_and_flatten_example_grads(model, nn.CrossEntropyLoss(reduction='none'), images, labels, t)
             _tid_g = torch.mean(_tid_eg, 0)
             sorted = self.sample_selection(_tid_g, _tid_eg)
             # 중요도 순으로 정렬
@@ -377,39 +408,65 @@ class OCSMemory(MemoryBase):
             
         print("MILESTONE: FIANL REPORT")
         print([self.cls_dict[image['klass']] for image in self.images], len(self.images))
-            
-            
+    
+    
     def compute_and_flatten_example_grads(self, m, criterion, data, target, task_id):
         _eg = []
-        criterion2 = nn.CrossEntropyLoss(reduction='none').to(self.device)
+        criterion2 = nn.CrossEntropyLoss().to(self.device)
         m.eval()
         m.zero_grad()
+        
+        add_hooks(m)
         pred = m(data)
-        loss = criterion2(pred, target)
-        for idx in range(len(data)):
-            loss[idx].backward(retain_graph=True)
-            _g = self.flatten_grads(m, numpy_output=True)
-            _eg.append(torch.Tensor(_g))
-            m.zero_grad()
-        return torch.stack(_eg)
+        criterion2(pred, target).backward(retain_graph=True)
+        compute_grad1(m)
+        
+        total_grads = None
+        avg_grads = None
+        for param in m.parameters():
+            try:
+                if total_grads == None:
+                    total_grads = param.grad1.detach().view(len(data), -1)
+                    avg_grads = param.grad.detach().view(-1)
+                else:
+                    total_grads = torch.cat([total_grads, param.grad1.detach().view(len(data), -1)], -1)                    
+                    avg_grads = torch.cat([avg_grads, param.grad.detach().view(-1)])
+            except:
+                pass
+                
+        return total_grads, avg_grads
+            
+    # def compute_and_flatten_example_grads(self, m, criterion, data, target, task_id):
+    #     _eg = []
+    #     criterion2 = nn.CrossEntropyLoss(reduction='none').to(self.device)
+    #     m.eval()
+    #     m.zero_grad()
+    #     pred = m(data)
+    #     loss = criterion2(pred, target)
+    #     for idx in range(len(data)):
+    #         loss[idx].backward(retain_graph=True)
+    #         _g = self.flatten_grads(m, numpy_output=True)
+    #         _eg.append(torch.Tensor(_g))
+    #         m.zero_grad()
+    #     return torch.stack(_eg)
     
-    # Extract gradients from the model
-    def flatten_grads(self, m, numpy_output=False, bias=True, only_linear=False):
-        total_grads = []
-        for name, param in m.named_parameters():
-            if only_linear:
-                if (bias or not 'bias' in name) and 'linear' in name:
-                    total_grads.append(param.grad.detach().view(-1))
-            else:
-                if (bias or not 'bias' in name) and not 'bn' in name and not 'IC' in name:
-                    try:
-                        total_grads.append(param.grad.detach().view(-1))
-                    except AttributeError:
-                        pass
-        total_grads = torch.cat(total_grads)
-        if numpy_output:
-            return total_grads.cpu().detach().numpy()
-        return total_grads
+    # # Extract gradients from the model
+    # def flatten_grads(self, m, numpy_output=False, bias=True, only_linear=False):
+    #     total_grads = []
+    #     for name, param in m.named_parameters():
+    #         if only_linear:
+    #             if (bias or not 'bias' in name) and 'linear' in name:
+    #                 total_grads.append(param.grad.detach().view(-1))
+    #         else:
+    #             if (bias or not 'bias' in name) and not 'bn' in name and not 'IC' in name:
+    #                 try:
+    #                     total_grads.append(param.grad.detach().view(-1))
+    #                 except AttributeError:
+    #                     pass
+    #     total_grads = torch.cat(total_grads)
+    #     if numpy_output:
+    #         return total_grads.cpu().detach().numpy()
+    #     return total_grads
     
     def sample_selection(self, g, eg, ref_grads=None, attn=None):
         ng = torch.norm(g)
