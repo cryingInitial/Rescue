@@ -13,7 +13,7 @@ import warnings
 warnings.filterwarnings(action='ignore')
 
 # etf_resmem_sigma0_num_32100_iter1.0_sigma1.0_criterion_softmax_top_k3_knn_sigma0.7_fc.pickle
-method = "etf_resmem_sigma0"
+method = "etf_resmem_sigma10"
 iteration = 1.0
 fig_name = method + "_iter" + str(iteration) 
 prefix = method + "_num_"
@@ -42,7 +42,7 @@ def get_within_class_covariance(feature_dict):
     cov_matrix = torch.zeros(512, 512).cuda()
     total_num = 0
     for idx, klass in enumerate(list(feature_dict.keys())):
-        cov_matrix += batch_cov(feature_dict[klass].cuda())
+        cov_matrix += torch.sum(batch_cov(feature_dict[klass].cuda()), dim=0)
         total_num += len(feature_dict[klass])
     return cov_matrix / total_num
 '''
@@ -67,7 +67,7 @@ def get_between_class_covariance(mean_vec_list, feature_dict):
     for key in feature_dict.keys():
         total_feature_dict.extend(feature_dict[key])
 
-    global_mean_vec = torch.mean(torch.stack(total_feature_dict, dim=0), dim=0)
+    global_mean_vec = torch.mean(torch.stack(total_feature_dict, dim=0), dim=0).cuda()
 
     for klass in list(feature_dict.keys()):
         #B += (mean_vec_list[klass] - global_mean_vec) * (mean_vec_list[klass] - global_mean_vec).T
@@ -160,11 +160,11 @@ for index in range(100, 50000, 100):
 
     # feature normalize
     whole_feature_list = torch.stack(sum([v for v in feature_dict.values()], []))
-    mu_G = torch.mean(whole_feature_list, dim=0).cpu()
+    mu_G = torch.mean(whole_feature_list, dim=0)
     
     for cls in list(feature_dict.keys()):
-        feature_dict[cls] = torch.stack(feature_dict[cls]).cpu()
-        residual_dict[cls] = torch.stack(residual_dict[cls]).cpu()
+        feature_dict[cls] = torch.stack(feature_dict[cls])
+        residual_dict[cls] = torch.stack(residual_dict[cls])
         mean_vec_list[cls] = torch.mean(feature_dict[cls], dim=0)
         mean_vec_tensor_list.append(mean_vec_list[cls])
 
@@ -174,7 +174,7 @@ for index in range(100, 50000, 100):
 
     # added feature normalize
     added_whole_feature_list = torch.cat(list(added_feature_dict.values()))
-    added_mu_G = torch.mean(added_whole_feature_list, dim=0).cpu()
+    added_mu_G = torch.mean(added_whole_feature_list, dim=0)
 
     added_mean_vec_tensor_list = torch.stack(added_mean_vec_tensor_list)
     mean_vec_tensor_list = torch.stack(mean_vec_tensor_list)
@@ -251,22 +251,22 @@ for index in range(100, 50000, 100):
 
     ### check feature-classifier distance ###
     for feature_key in feature_dict.keys():
-        dist = get_angle(mean_vec_list[feature_key].cpu(), fc_dict[feature_key].cpu())
+        dist = get_angle(mean_vec_list[feature_key], fc_dict[feature_key])
         dist_dict[feature_key].append(dist)
 
     ### check residual feature-classifier distance ###
     for feature_key in feature_dict.keys():
-        added_dist = get_angle(added_mean_vec_list[feature_key].cpu(), fc_dict[feature_key].cpu())
+        added_dist = get_angle(added_mean_vec_list[feature_key], fc_dict[feature_key])
         added_dist_dict[feature_key].append(added_dist)
 
     ### check nc1 ###
-    W = get_within_class_covariance(mean_vec_list, feature_dict)
+    W = get_within_class_covariance(feature_dict)
     B, global_mean_vec = get_between_class_covariance(mean_vec_list, feature_dict)
     nc1_value = torch.trace(W @ torch.linalg.pinv(B)) / len(mean_vec_list.keys())
     nc1_list.append(nc1_value)
 
     ### check residual nc1 ###
-    W = get_within_class_covariance(mean_vec_list, added_feature_dict)
+    W = get_within_class_covariance(added_feature_dict)
     B, global_mean_vec = get_between_class_covariance(added_mean_vec_list, added_feature_dict)
     nc1_value = torch.trace(W @ torch.linalg.pinv(B)) / len(added_mean_vec_list.keys())
     added_nc1_list.append(nc1_value)
