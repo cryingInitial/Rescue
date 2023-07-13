@@ -8,16 +8,20 @@ import numpy as np
 from sklearn.manifold import TSNE
 import seaborn as sns
 import scipy.linalg as scilin
+from collections import defaultdict
+import warnings
+warnings.filterwarnings(action='ignore')
 
 # etf_resmem_sigma0_num_32100_iter1.0_sigma1.0_criterion_softmax_top_k3_knn_sigma0.7_fc.pickle
 method = "etf_resmem_sigma10"
 iteration = 1.0
 fig_name = method + "_iter" + str(iteration) 
 prefix = method + "_num_"
-postfix = "_sigma1.0_criterion_softmax_top_k15_knn_sigma0.9" #"_sigma1.0_criterion_softmax_top_k3_knn_sigma0.7"
+postfix = "_sigma1.0_criterion_softmax_top_k21_knn_sigma0.9" #"_sigma1.0_criterion_softmax_top_k3_knn_sigma0.7"
 
-added_timing = [100, 200, 300, 400, 500] # disjoint
-#added_timing = [1, 3, 24, 32] # continuous
+#added_timing = [100, 200, 300, 400, 500] # disjoint
+#if seed == 1:
+added_timing = [100, 200, 2400, 3100, 9700, 14500, 18900]
 
 def get_angle(a, b):
     inner_product = (a * b).sum()
@@ -26,6 +30,22 @@ def get_angle(a, b):
     cos = inner_product / (a_norm * b_norm)
     return cos
 
+def batch_cov(points):
+    B, D = points.size()
+    mean = points.mean(dim=0)
+    diffs = (points - mean)
+    prods = torch.bmm(diffs.unsqueeze(2), diffs.unsqueeze(1))
+    return prods
+
+def get_within_class_covariance(feature_dict):
+    # feature dimension 512로 fixed
+    cov_matrix = torch.zeros(512, 512).cuda()
+    total_num = 0
+    for idx, klass in enumerate(list(feature_dict.keys())):
+        cov_matrix += torch.sum(batch_cov(feature_dict[klass].cuda()), dim=0)
+        total_num += len(feature_dict[klass])
+    return cov_matrix / total_num
+'''
 def get_within_class_covariance(mean_vec_list, feature_dict):
     # feature dimension 512로 fixed
     W = torch.zeros((512, 512))
@@ -37,16 +57,17 @@ def get_within_class_covariance(mean_vec_list, feature_dict):
         total_num += len(feature_dict[klass])
     W /= total_num
     return W
+'''
 
 def get_between_class_covariance(mean_vec_list, feature_dict):
-    B = torch.zeros((512, 512))
+    B = torch.zeros((512, 512)).cuda()
 
     # for global avg calcuation, not just avg mean_vec, feature mean directly (since it is imbalanced dataset)
     total_feature_dict = []
     for key in feature_dict.keys():
         total_feature_dict.extend(feature_dict[key])
 
-    global_mean_vec = torch.mean(torch.stack(total_feature_dict, dim=0), dim=0)
+    global_mean_vec = torch.mean(torch.stack(total_feature_dict, dim=0), dim=0).cuda()
 
     for klass in list(feature_dict.keys()):
         #B += (mean_vec_list[klass] - global_mean_vec) * (mean_vec_list[klass] - global_mean_vec).T
@@ -62,12 +83,12 @@ def get_nc2(mean_vec_list, global_mean_vec):
         M.append(recentered_mean / nn.functional.normalize(recentered_mean, p=2.0, dim=0))
     M = torch.stack(M, dim=0)
 
-    nc2_matrix = (torch.matmul(M, M.T) / LA.matrix_norm(torch.matmul(M, M.T))) - ((K-1)**-0.5) * (torch.eye(K) - (1/K)*torch.ones((K,K)))
+    nc2_matrix = (torch.matmul(M, M.T) / LA.matrix_norm(torch.matmul(M, M.T))) - ((K-1)**-0.5) * (torch.eye(K).cuda() - (1/K)*torch.ones((K,K)).cuda())
 
     return M, K, LA.matrix_norm(nc2_matrix)
 
 def get_nc3(M, A, K):
-    nc3_matrix = torch.matmul(A, M.T) / LA.matrix_norm(torch.matmul(A, M.T)) - ((K-1)**-0.5) * (torch.eye(K) - (1/K)*torch.ones((K,K)))
+    nc3_matrix = torch.matmul(A, M.T) / LA.matrix_norm(torch.matmul(A, M.T)) - ((K-1)**-0.5) * (torch.eye(K).cuda() - (1/K)*torch.ones((K,K)).cuda())
     return LA.matrix_norm(nc3_matrix)
 
 def compute_ETF(W):
@@ -82,14 +103,14 @@ def compute_ETF(W):
 
 def compute_W_H_relation(W, mu_c_dict, mu_G):
     K = len(mu_c_dict)
-    H = torch.empty(mu_c_dict[0].shape[0], K)
+    H = torch.empty(mu_c_dict[0].shape[0], K).cuda()
     for i in range(K):
         H[:, i] = mu_c_dict[i] - mu_G
 
     W = W[:K]
-    WH = torch.mm(W, H.cuda())
+    WH = torch.mm(W, H)
     WH /= torch.norm(WH, p='fro')
-    sub = 1 / pow(K - 1, 0.5) * (torch.eye(K) - 1 / K * torch.ones((K, K))).cuda()
+    sub = 1 / pow(K - 1, 0.5) * (torch.eye(K).cuda() - 1 / K * torch.ones((K, K)).cuda())
     res = torch.norm(WH - sub, p='fro')
     return res.detach().cpu().numpy().item(), H
 
@@ -103,12 +124,17 @@ nc2_list = []
 nc3_list = []
 etf_list = []
 WH_list = []
-dist_dict = {}
+dist_dict = defaultdict(list)
 within_std = {}
 between_std = []
 between_dist_std = {}
 
-for index in range(100, 8600, 100):
+added_dist_dict = defaultdict(list)
+added_nc1_list = []
+added_etf_list = []
+added_WH_list = []
+
+for index in range(100, 50000, 100):
     fc_pickle_name = prefix + str(index) + "_iter" + str(iteration) +  postfix + "_fc.pickle"
     feature_pickle_name = prefix + str(index) + "_iter" + str(iteration) +  postfix + "_feature.pickle"
     residual_pickle_name = prefix + str(index) + "_iter" + str(iteration) +  postfix + "_residual.pickle"
@@ -126,38 +152,35 @@ for index in range(100, 8600, 100):
     with open(residual_pickle_name, 'rb') as f:
         residual_dict = pickle.load(f)
 
+    added_feature_dict = {}
+    added_mean_vec_list = {}
     mean_vec_list = {}
     mean_vec_tensor_list = []
+    added_mean_vec_tensor_list = []
 
     # feature normalize
-    whole_feature_list = torch.stack(sum([v for v in feature_dict.values()], [])) #torch.stack(list(self.feature_dict.values())[0])
-    mu_G = torch.mean(whole_feature_list, dim=0).cpu()
+    whole_feature_list = torch.stack(sum([v for v in feature_dict.values()], []))
+    mu_G = torch.mean(whole_feature_list, dim=0)
     
     for cls in list(feature_dict.keys()):
-        feature_dict[cls] = torch.stack(feature_dict[cls]).cpu()
+        feature_dict[cls] = torch.stack(feature_dict[cls])
+        residual_dict[cls] = torch.stack(residual_dict[cls])
         mean_vec_list[cls] = torch.mean(feature_dict[cls], dim=0)
         mean_vec_tensor_list.append(mean_vec_list[cls])
 
+        added_feature_dict[cls] = feature_dict[cls] + residual_dict[cls]
+        added_mean_vec_list[cls] = torch.mean(added_feature_dict[cls], dim=0)
+        added_mean_vec_tensor_list.append(added_mean_vec_list[cls])
+
+    # added feature normalize
+    added_whole_feature_list = torch.cat(list(added_feature_dict.values()))
+    added_mu_G = torch.mean(added_whole_feature_list, dim=0)
+
+    added_mean_vec_tensor_list = torch.stack(added_mean_vec_tensor_list)
     mean_vec_tensor_list = torch.stack(mean_vec_tensor_list)
     
-    #mean_vec_list = [torch.mean(feature_dict[cls], dim=0) for cls in list(feature_dict.keys())]
     print("index", index)
-    '''
-    ### angle check ###
-    for i in range(len(mean_vec_list)):
-        for j in range(i+1, len(mean_vec_list)):
-            print("i", i, "j", j, "cos", get_angle(mean_vec_list[i], mean_vec_list[j]))
-    print()
-    '''
-    '''
-    print("get within covariance")
-    print(get_within_class_covariance(mean_vec_list, feature_dict).shape)
     
-    print("get between covariance")
-    print(get_between_class_covariance(mean_vec_list, feature_dict).shape)
-    '''
-    
-    '''
     ### plot tsne ###
     feature_list = []
     label_list = []
@@ -167,7 +190,7 @@ for index in range(100, 8600, 100):
             label_list.append(key)
         
     label_list = np.array(label_list)
-    color_list = ["violet", "limegreen", "orange","pink","blue","brown","red","grey","yellow","green"] #cifar10 기준
+    color_list = ["violet", "limegreen", "orange","pink","blue","brown","red","grey","yellow","green"]
     tsne_model = TSNE(n_components=2)
     cluster = np.array(tsne_model.fit_transform(torch.stack(feature_list).cpu()))
     plt.figure()
@@ -180,7 +203,30 @@ for index in range(100, 8600, 100):
     tsne_fig_name =  prefix + str(index) + "_iter" + str(iteration) + "_tsne_figure.png"
     plt.savefig(tsne_fig_name)
     ############
-    '''
+
+    ### plot tsne ###
+    feature_list = []
+    label_list = []
+    for key in list(added_feature_dict.keys()):
+        feature_list.extend(added_feature_dict[key])
+        for _ in range(len(added_feature_dict[key])):
+            label_list.append(key)
+        
+    label_list = np.array(label_list)    
+    color_list = ["violet", "limegreen", "orange","pink","blue","brown","red","grey","yellow","green"]
+    tsne_model = TSNE(n_components=2)
+    cluster = np.array(tsne_model.fit_transform(torch.stack(feature_list).cpu()))
+    plt.figure()
+    for i in range(len(list(added_feature_dict.keys()))):
+        idx = np.where(np.array(label_list) == i)
+        label = "class" + str(i)
+        plt.scatter(cluster[idx[0], 0], cluster[idx[0], 1], marker='.', c=color_list[i], label=label)
+        plt.legend()
+
+    tsne_fig_name =  "added_" + prefix + str(index) + "_iter" + str(iteration) + "_tsne_figure.png"
+    plt.savefig(tsne_fig_name)
+    ############
+
     ### check within std ###
     for feature_key in feature_dict.keys():
         feature_std = torch.mean(torch.std(feature_dict[feature_key], dim=0))
@@ -203,40 +249,43 @@ for index in range(100, 8600, 100):
             else:
                 between_dist_std[label].append(dist_label)
 
-
     ### check feature-classifier distance ###
     for feature_key in feature_dict.keys():
-        # dist = ((mean_vec_list[feature_key].cpu() - fc_dict[feature_key].cpu())**2).sum().sqrt().item()
-        #print("fc_dict shape", fc_dict.shape)
-        dist = get_angle(mean_vec_list[feature_key].cpu(), fc_dict[feature_key].cpu())
-        if feature_key not in dist_dict.keys():
-            dist_dict[feature_key] = [dist]
-        else:
-            dist_dict[feature_key].append(dist)
+        dist = get_angle(mean_vec_list[feature_key], fc_dict[feature_key])
+        dist_dict[feature_key].append(dist)
 
+    ### check residual feature-classifier distance ###
+    for feature_key in feature_dict.keys():
+        added_dist = get_angle(added_mean_vec_list[feature_key], fc_dict[feature_key])
+        added_dist_dict[feature_key].append(added_dist)
 
     ### check nc1 ###
-    W = get_within_class_covariance(mean_vec_list, feature_dict)
+    W = get_within_class_covariance(feature_dict)
     B, global_mean_vec = get_between_class_covariance(mean_vec_list, feature_dict)
     nc1_value = torch.trace(W @ torch.linalg.pinv(B)) / len(mean_vec_list.keys())
     nc1_list.append(nc1_value)
 
-    ### check nc2 ###
-    M, K, nc2_value = get_nc2(mean_vec_list, global_mean_vec)
-    #nc2_value = compute_ETF(fc_dict)
-    nc2_list.append(nc2_value)
-
-    ### check nc3 ###
-    nc3_value = get_nc3(M, fc_dict.cpu()[:len(mean_vec_list)], K)
-    nc3_list.append(nc3_value)
+    ### check residual nc1 ###
+    W = get_within_class_covariance(added_feature_dict)
+    B, global_mean_vec = get_between_class_covariance(added_mean_vec_list, added_feature_dict)
+    nc1_value = torch.trace(W @ torch.linalg.pinv(B)) / len(added_mean_vec_list.keys())
+    added_nc1_list.append(nc1_value)
 
     ### check ETF (modified nc2) ###
     etf_value = compute_ETF(mean_vec_tensor_list)
     etf_list.append(etf_value)
 
+    ### check residual ETF (modified nc2) ###
+    etf_value = compute_ETF(added_mean_vec_tensor_list)
+    added_etf_list.append(etf_value)
+
     ### check W_H_relation (modieifed nc3) ###
     WH_relation_value, H = compute_W_H_relation(fc_dict, mean_vec_list, mu_G)
     WH_list.append(WH_relation_value)
+
+    ### check residual W_H_relation (modieifed nc3) ###
+    WH_relation_value, H = compute_W_H_relation(fc_dict, added_mean_vec_list, added_mu_G)
+    added_WH_list.append(WH_relation_value)
 
 
 '''
@@ -353,9 +402,8 @@ plt.figure()
 plt.title("feature-classifier similairty", fontsize=17)
 for key in list(dist_dict.keys())[:4]:
     label = "class" + str(key)
-    #print("key", key, "within_std[key]", len(savgol_filter(within_std[key], 7, 3)))
     try:
-        plt.plot(range(max_len)[-len(dist_dict[key]):], savgol_filter(dist_dict[key], 15, 3), label=label)
+        plt.plot(range(max_len)[-len(dist_dict[key]):], savgol_filter(added_dist_dict[key], 5, 3), label=label)
     except:
         pass
 for i in added_timing:
@@ -366,6 +414,24 @@ plt.ylabel("Cosine Similarity", fontsize=15)
 plt.grid()
 plt.legend()
 plt.savefig(fig_name + "_distance_result.png")
+
+### plot added feature-classifier distance ###
+plt.figure()
+plt.title("added feature-classifier similairty", fontsize=17)
+for key in list(added_dist_dict.keys())[:4]:
+    label = "class" + str(key)
+    try:
+        plt.plot(range(max_len)[-len(added_dist_dict[key]):], savgol_filter(added_dist_dict[key], 5, 3), label=label)
+    except:
+        pass
+for i in added_timing:
+    plt.axvline(x=i, color='r', linestyle='--', linewidth=2)
+
+plt.xlabel("# of iteration (X 100)", fontsize=15)
+plt.ylabel("Cosine Similarity", fontsize=15)
+plt.grid()
+plt.legend()
+plt.savefig(fig_name + "_added_distance_result.png")
 
 ### plot nc1 ###
 plt.figure()
@@ -381,27 +447,6 @@ for i in added_timing:
 plt.title("NC1", fontsize=20)
 plt.savefig(fig_name + "_nc1_result.png")
 
-'''
-### plot nc2 ###
-plt.figure()
-plt.xlabel("# of iteration (X 100)", fontsize=15)
-plt.ylabel("NC2", fontsize=15)
-plt.plot(range(len(nc2_list)), savgol_filter(nc2_list, 15, 3), linewidth='3', color='b')
-for i in range(1,4):
-    plt.axvline(x=i*100, color='r', linestyle='--', linewidth=2)
-plt.title("NC2 result", fontsize=20)
-plt.savefig(fig_name + "_nc2_result.png")
-
-### plot nc3 ###
-plt.figure()
-plt.xlabel("# of iteration (X 100)", fontsize=15)
-plt.ylabel("NC3", fontsize=15)
-plt.plot(range(len(nc3_list)), savgol_filter(nc3_list, 15, 3), linewidth='3', color='b')
-for i in range(1,4):
-    plt.axvline(x=i*100, color='r', linestyle='--', linewidth=2)
-plt.title("NC3 result", fontsize=20)
-plt.savefig(fig_name + "_nc3_result.png")
-'''
 
 ### plot ETF (NC2) ###
 plt.figure()
@@ -413,9 +458,9 @@ plt.grid()
 plt.plot(range(len(etf_list)), etf_list, linewidth='3', color='purple')
 for i in added_timing:
     plt.axvline(x=i, color='r', linestyle='--', linewidth=2)
-
 plt.title("NC2", fontsize=20)
 plt.savefig(fig_name + "_nc2_result.png")
+
 
 ### plot WH (NC3) ###
 plt.figure()
