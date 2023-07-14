@@ -28,7 +28,7 @@ class OCS(ER):
         super().__init__(train_datalist, test_datalist, device, **kwargs)
         self.total_samples = len(train_datalist)
         self.base = 0
-        self.ratio = .8
+        self.ratio = 0
         self.sub_step = self.n_tasks * 2
         self.samples_per_sub_step = self.total_samples // self.sub_step
         
@@ -116,6 +116,7 @@ class OCS(ER):
                     ref_grads = self.compute_and_flatten_example_grads(self.model, self.optimizer, x_memory, y_memory, self.task_num, is_total=False)
                     
                 pick = self.sample_selection(_g, _eg, ref_grads)[:self.temp_batch_size // 2]
+                del _g, _eg, ref_grads
                 
                 if self.base % self.samples_per_task < self.samples_per_sub_step * (1 + self.ratio) and i == (iterations - 1):
                     self.candidates += list(pick + self.base)
@@ -190,7 +191,7 @@ class OCS(ER):
     def compute_and_flatten_example_grads(self, m, criterion, data, target, task_id, is_total=False):
         _eg = []
         criterion2 = nn.CrossEntropyLoss().to(self.device)
-        m.eval()
+        # m.eval()
         m.zero_grad()
         
         add_hooks(m)
@@ -211,12 +212,15 @@ class OCS(ER):
                     avg_grads = torch.cat([avg_grads, param.grad.detach().view(-1)])
             except:
                 pass
+            
+        clear_backprops(m)
+        
         if is_total:
             del avg_grads
             return total_grads
         else:
             del total_grads
-            return avg_grads        
+            return avg_grads
     
     # def compute_and_flatten_example_grads(self, m, criterion, data, target, task_id):
     #     _eg = []
