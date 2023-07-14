@@ -13,7 +13,7 @@ from methods.er_new import ER
 
 from utils.data_loader import MultiProcessLoader
 from utils.augment import Preprocess
-from utils.autograd_hacks import add_hooks, compute_grad1, clear_backprops
+from utils.autograd_hacks import add_hooks, remove_hooks, compute_grad1, clear_backprops
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -28,7 +28,7 @@ class OCS(ER):
         super().__init__(train_datalist, test_datalist, device, **kwargs)
         self.total_samples = len(train_datalist)
         self.base = 0
-        self.ratio = .8
+        self.ratio = 0
         self.sub_step = self.n_tasks * 2
         self.samples_per_sub_step = self.total_samples // self.sub_step
         
@@ -79,11 +79,8 @@ class OCS(ER):
     def online_train(self, iterations=1):
                                                                                                                                                                                                                           
         total_loss, correct, num_data = 0.0, 0.0, 0.0
-        print(iterations)
-        for i in range(iterations):
+        for i in range(iterations // 2):
             # ER과의 공평한 비교를 위해 iterations을 2로 나눠서 ER과 동일한 iteration 수행
-            if i < iterations // 2:
-                continue
             
             self.model.train()
             data = self.get_batch()
@@ -116,10 +113,15 @@ class OCS(ER):
                     ref_grads = self.compute_and_flatten_example_grads(self.model, self.optimizer, x_memory, y_memory, self.task_num, is_total=False)
                     
                 pick = self.sample_selection(_g, _eg, ref_grads)[:self.temp_batch_size // 2]
-                
+
+                _eg = _eg.detach().cpu()
+                _g = _g.detach().cpu()
+                if ref_grads is not None:
+                    ref_grads = ref_grads.detach().cpu()
+
                 if self.base % self.samples_per_task < self.samples_per_sub_step * (1 + self.ratio) and i == (iterations - 1):
                     self.candidates += list(pick + self.base)
-                    
+                
             x_stream = x_stream[pick]
             y_stream = y_stream[pick]
             self.optimizer.zero_grad()
@@ -190,7 +192,7 @@ class OCS(ER):
     def compute_and_flatten_example_grads(self, m, criterion, data, target, task_id, is_total=False):
         _eg = []
         criterion2 = nn.CrossEntropyLoss().to(self.device)
-        m.eval()
+        # m.eval()
         m.zero_grad()
         
         add_hooks(m)
@@ -198,6 +200,9 @@ class OCS(ER):
         criterion2(pred, target).backward(retain_graph=True)
         compute_grad1(m)
         
+        clear_backprops(m)
+        remove_hooks(m)
+
         total_grads = None
         avg_grads = None
         
@@ -216,41 +221,7 @@ class OCS(ER):
             return total_grads
         else:
             del total_grads
-            return avg_grads        
-    
-    # def compute_and_flatten_example_grads(self, m, criterion, data, target, task_id):
-    #     _eg = []
-    #     criterion2 = nn.CrossEntropyLoss(reduction='none').to(self.device)
-    #     m.eval()
-    #     m.zero_grad()
-    #     pred = m(data)
-    #     loss = criterion2(pred, target)
-    #     for idx in range(len(data)):
-    #         loss[idx].backward(retain_graph=True)
-    #         _g = self.flatten_grads(m, numpy_output=True)
-    #         _eg.append(torch.Tensor(_g))
-    #         m.zero_grad()
-    #         print(_g.shape)
-    #     return torch.stack(_eg)
-    
-    # Extract gradients from the model
-    # def flatten_grads(self, m, numpy_output=False, bias=True, only_linear=False):
-    #     total_grads = []
-    #     for name, param in m.named_parameters():
-    #         if only_linear:
-    #             if (bias or not 'bias' in name) and 'linear' in name:
-    #                 total_grads.append(param.grad.detach().view(-1))
-    #         else:
-    #             if (bias or not 'bias' in name) and not 'bn' in name and not 'IC' in name:
-    #                 try:
-    #                     total_grads.append(param.grad.detach().view(-1))
-    #                 except AttributeError:
-    #                     pass
-    #                     #print('no_grad', name)
-    #     total_grads = torch.cat(total_grads)
-    #     if numpy_output:
-    #         return total_grads.cpu().detach().numpy()
-    #     return total_grads
+            return avg_grads   
     
     def update_memory(self, sample, sample_num):
         # only when OCS is not used
