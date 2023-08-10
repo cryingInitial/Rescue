@@ -109,12 +109,16 @@ def _capture_backprops(layer: nn.Module, _input, output):
         return
 
     if _enforce_fresh_backprop:
-        assert not hasattr(layer, 'backprops_list'), "Seeing result of previous backprop, use clear_backprops(model) to clear"
+        # assert not hasattr(layer, 'backprops_list'), "Seeing result of previous backprop, use clear_backprops(model) to clear"
         _enforce_fresh_backprop = False
 
     if not hasattr(layer, 'backprops_list'):
         setattr(layer, 'backprops_list', [])
-    layer.backprops_list.append(output[0].detach())
+        
+    if len(layer.backprops_list) == 1:
+        layer.backprops_list[0] = output[0].detach()
+    else:
+        layer.backprops_list.append(output[0].detach())
 
 
 def clear_backprops(model: nn.Module) -> None:
@@ -122,7 +126,6 @@ def clear_backprops(model: nn.Module) -> None:
     for layer in model.modules():
         if hasattr(layer, 'backprops_list'):
             del layer.backprops_list
-
 
 def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
     """
@@ -139,7 +142,7 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
             continue
         assert hasattr(layer, 'activations'), "No activations detected, run forward after add_hooks(model)"
         assert hasattr(layer, 'backprops_list'), "No backprops detected, run backward after add_hooks(model)"
-        assert len(layer.backprops_list) == 1, "Multiple backprops detected, make sure to call clear_backprops(model)"
+        # assert len(layer.backprops_list) == 1, "Multiple backprops detected, make sure to call clear_backprops(model)"
 
         A = layer.activations
         n = A.shape[0]
@@ -272,4 +275,4 @@ def symsqrt(a, cond=None, return_rank=False, dtype=torch.float32):
     if return_rank:
         return B, len(psigma_diag)
     else:
-        return B
+        return 

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 from utils.torch_utils import load_state_dict_from_url 
-from mmcv.cnn import build_norm_layer
+# from mmcv.cnn import build_norm_layer
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -61,32 +61,32 @@ def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
-class MLPFFNNeck(nn.Module):
-    def __init__(self, in_channels=512, out_channels=512):
-        super().__init__()
-        self.avg = nn.AdaptiveAvgPool2d((1, 1))
-        self.ln1 = nn.Sequential(OrderedDict([
-            ('linear', nn.Linear(in_channels, in_channels * 2)),
-            ('ln', build_norm_layer(dict(type='LN'), in_channels * 2)[1]),
-            ('relu', nn.LeakyReLU(0.1))
-        ]))
-        self.ln2 = nn.Sequential(OrderedDict([
-            ('linear', nn.Linear(in_channels * 2, in_channels * 2)),
-            ('ln', build_norm_layer(dict(type='LN'), in_channels * 2)[1]),
-            ('relu', nn.LeakyReLU(0.1))
-        ]))
-        self.ln3 = nn.Sequential(OrderedDict([
-            ('linear', nn.Linear(in_channels * 2, out_channels, bias=False)),
-        ]))
-        if in_channels == out_channels:
-            # self.ffn = nn.Identity()
-            self.ffn = nn.Sequential(OrderedDict([
-                ('proj', nn.Linear(in_channels, out_channels, bias=False)),
-            ]))
-        else:
-            self.ffn = nn.Sequential(OrderedDict([
-                ('proj', nn.Linear(in_channels, out_channels, bias=False)),
-            ]))
+# class MLPFFNNeck(nn.Module):
+#     def __init__(self, in_channels=512, out_channels=512):
+#         super().__init__()
+#         self.avg = nn.AdaptiveAvgPool2d((1, 1))
+#         self.ln1 = nn.Sequential(OrderedDict([
+#             ('linear', nn.Linear(in_channels, in_channels * 2)),
+#             ('ln', build_norm_layer(dict(type='LN'), in_channels * 2)[1]),
+#             ('relu', nn.LeakyReLU(0.1))
+#         ]))
+#         self.ln2 = nn.Sequential(OrderedDict([
+#             ('linear', nn.Linear(in_channels * 2, in_channels * 2)),
+#             ('ln', build_norm_layer(dict(type='LN'), in_channels * 2)[1]),
+#             ('relu', nn.LeakyReLU(0.1))
+#         ]))
+#         self.ln3 = nn.Sequential(OrderedDict([
+#             ('linear', nn.Linear(in_channels * 2, out_channels, bias=False)),
+#         ]))
+#         if in_channels == out_channels:
+#             # self.ffn = nn.Identity()
+#             self.ffn = nn.Sequential(OrderedDict([
+#                 ('proj', nn.Linear(in_channels, out_channels, bias=False)),
+#             ]))
+#         else:
+#             self.ffn = nn.Sequential(OrderedDict([
+#                 ('proj', nn.Linear(in_channels, out_channels, bias=False)),
+#             ]))
 
     def init_weights(self):
         pass
@@ -261,7 +261,7 @@ class ResNet(nn.Module):
         # neck layer forward or not
         self.neck_forward = Neck
         
-        self.neck = MLPFFNNeck(in_channels = 512, out_channels=512)
+        # self.neck = MLPFFNNeck(in_channels = 512, out_channels=512)
         self.groups = groups
         self.base_width = width_per_group
         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
@@ -373,12 +373,12 @@ class ResNet(nn.Module):
         out4 = self.layer4(out3)
         out4 = self.avgpool(out4)
         
-        if self.neck_forward:
-            # neck layer
-            feature = self.neck(out4)
-        else:
-            feature = out4
-
+        # if self.neck_forward:
+        #     # neck layer
+        #     feature = self.neck(out4)
+        # else:
+        #     feature = out4
+        feature = out4
         feature = torch.flatten(feature, 1)
         
         # for moco 

@@ -77,11 +77,10 @@ class CLManagerBase:
         self.test_datalist = test_datalist
         self.cls_dict = {}
         self.total_samples = len(self.train_datalist)
-
         self.train_transform, self.test_transform, self.cpu_transform, self.test_gpu_transform, self.future_train_transform, self.n_classes = get_transform(self.dataset, self.transforms, self.transform_on_gpu)
         self.cutmix = "cutmix" in kwargs["transforms"]
 
-        #self.model = select_model(self.model_name, self.dataset, pre_trained=True ).to(self.device)
+        # self.model = select_model(self.model_name, self.dataset, pre_trained=True ).to(self.device)
         self.model = select_model(self.model_name, self.dataset, 1,).to(self.device)
         print("model")
         print(self.model)
@@ -553,7 +552,6 @@ class CLManagerBase:
 
                 total_correct += torch.sum(preds == y.unsqueeze(1)).item()
                 total_num_data += y.size(0)
-
                 xlabel_cnt, correct_xlabel_cnt = self._interpret_pred(y, pred)
                 correct_l += correct_xlabel_cnt.detach().cpu()
                 num_data_l += xlabel_cnt.detach().cpu()
@@ -681,8 +679,8 @@ class CLManagerBase:
     def _interpret_pred(self, y, pred):
         ret_num_data = torch.zeros(self.n_classes).to(self.device)
         ret_corrects = torch.zeros(self.n_classes).to(self.device)
-
         xlabel_cls, xlabel_cnt = y.unique(return_counts=True)
+        
         for cls_idx, cnt in zip(xlabel_cls, xlabel_cnt):
             ret_num_data[cls_idx] = cnt
 

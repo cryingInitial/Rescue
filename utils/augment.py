@@ -2,7 +2,7 @@
 # https://github.com/DeepVoltaire/AutoAugment
 
 
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance, ImageOps, ImageFilter
 import numpy as np
 import random
 import logging
@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torchvision import transforms
+import torchvision.transforms as T
 from kornia import image_to_tensor, tensor_to_image
 import kornia.augmentation as K
 from kornia.geometry.transform import resize
@@ -22,6 +23,18 @@ logger = logging.getLogger()
 import torchvision.transforms.functional as TF
 import random
 
+class GaussianBlur(object):
+    """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
+
+    def __init__(self, sigma=[0.1, 2.0]):
+        self.sigma = sigma
+
+    def __call__(self, x):
+        sigma = random.uniform(self.sigma[0], self.sigma[1])
+        x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
+        
+        return x
+    
 def my_segmentation_transforms(image, label, total_classes):
     image_90 = TF.rotate(image, 90)
     image_180 = TF.rotate(image, 180)
@@ -114,6 +127,8 @@ def get_transform(dataset, transform_list, transform_on_gpu=False):
                 transforms.Resize((inp_size, inp_size)),
                 transforms.PILToTensor()
             ])
+
+        
         train_transform = transforms.Compose(
             [
                 transforms.RandomCrop(inp_size, padding=4),
@@ -586,3 +601,4 @@ def get_statistics(dataset: str):
         inp_size[dataset],
         in_channels[dataset],
     )
+

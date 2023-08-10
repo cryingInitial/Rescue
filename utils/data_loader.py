@@ -23,6 +23,7 @@ from utils.augment import DataAugmentation, Preprocess, get_statistics
 
 from utils.data_worker import worker_loop
 
+
 logger = logging.getLogger()
 
 
@@ -40,6 +41,8 @@ class MultiProcessLoader():
         self.workers = []
         self.index_queues = []
         self.test_transform = test_transform
+        
+        
         for i in range(self.n_workers):
             index_queue = multiprocessing.Queue()
             index_queue.cancel_join_thread()
@@ -159,18 +162,19 @@ def nonzero_indices(bool_mask_tensor):
     # Returns tensor which contains indices of nonzero elements in bool_mask_tensor
     return bool_mask_tensor.nonzero(as_tuple=True)[0]
 
-def get_custom_double_transform(transform):
+def get_custom_double_transform(transform, resize_maps):
     tfs = []
     for tf in transform:
         if isinstance(tf, transforms.RandomCrop):
-            tfs.append(CustomRandomCrop(tf.size, tf.padding, resize=self.args.resize_maps==1, min_resize_index=2))
+            tfs.append(CustomRandomCrop(tf.size, tf.padding, resize=resize_maps==1, min_resize_index=2))
         elif isinstance(tf, transforms.RandomHorizontalFlip):
             tfs.append(CustomRandomHorizontalFlip(tf.p))
         elif isinstance(tf, transforms.Compose):
             tfs.append(DoubleCompose(
-                get_custom_double_transform(tf.transforms)))
+                get_custom_double_transform(tf.transforms, resize_maps)))
         else:
             tfs.append(DoubleTransform(tf))
+    return DoubleCompose(tfs)
 
 # def partial_distill_loss(model, net_partial_features: list, pret_partial_features: list,
 #                          targets, task_ids, device, teacher_forcing: list = None, extern_attention_maps: list = None):
@@ -246,7 +250,6 @@ def partial_distill_loss(model, net_partial_features: list, pret_partial_feature
         attention_maps.append(adapt_attention.detach().cpu().clone().data)
 
     return loss / (i + 1), attention_maps
-
 
 class Preprocess(nn.Module):
     """Module to perform pre-process using Kornia on torch tensors."""
@@ -1743,12 +1746,15 @@ def get_train_datalist(dataset, sigma, repeat, init_cls, rnd_seed, mode=""):
         with open(f"collections/{dataset}/F_{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
             train_list = json.load(fp)
         return train_list['stream'], train_list['cls_dict'], train_list['cls_addition'], 0, 0, 0, 0, 0
+    # elif mode == "ocs":
+    #     with open("collections/cifar10/debug_2000.json") as fp:
+    #         train_list = json.load(fp)
+    #     return train_list['stream'], train_list['cls_dict'], train_list['cls_addition'], 0, 0, 0, 0, 0
     else:
         with open(f"collections/{dataset}/{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
             train_list = json.load(fp)
         print("train_list", train_list.keys())
-        return train_list['stream'], train_list['cls_dict'], train_list['cls_addition'], train_list['cls_order'], train_list["future_train_dict_k5"], train_list["future_train_dict_k10"], train_list["future_train_dict_k20"], train_list["future_train_dict_k100"]
-
+        return train_list['stream'], train_list['cls_dict'], train_list['cls_addition'], 0, 0, 0, 0, 0
 
 def get_test_datalist(dataset) -> List:
     try:
@@ -1761,7 +1767,7 @@ def get_test_datalist(dataset) -> List:
 def get_train_baseinit_datalist(dataset, sigma, repeat, init_cls, rnd_seed):
     with open(f"collections/{dataset}/G_{dataset}_sigma{sigma}_repeat{repeat}_init{init_cls}_seed{rnd_seed}.json") as fp:
         train_list = json.load(fp)
-    return train_list['stream'], train_list['cls_dict']
+    return train_list['stream'], train_list['cls_list']
 
 def get_statistics(dataset: str):
     """

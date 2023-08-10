@@ -22,6 +22,8 @@ def base_parser():
     parser.add_argument("--num_k_shot", type=int, default=10, help="")
     parser.add_argument("--num_future_class", type=int, default=2, help="")
     parser.add_argument("--future_training_iterations", type=int, default=20, help="")
+    parser.add_argument("--spare_classes", type=int, default=2)
+    parser.add_argument("--alpha", type=int, default=1)
     
     # for MOCO
     parser.add_argument("--moco_k", type=int, default=4096, help="pre_train epoch")

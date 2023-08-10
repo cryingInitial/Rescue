@@ -40,6 +40,8 @@ class TWF(ER):
         self.online_train_ct = 0
         self.batch_size = kwargs['batchsize']
 
+        print("!checking hyperparameters before running")
+        print(f"alpha: {kwargs['der_alpha']}, beta: {kwargs['der_beta']}, lambda: {kwargs['lambda_fp']}, lambda_replay: {kwargs['lambda_fp_replay']}")
         # Memory Switing
         # self.memory = TwFMemory(self.memory_size)
         self.initialize()

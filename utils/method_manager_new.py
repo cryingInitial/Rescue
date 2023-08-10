@@ -28,6 +28,8 @@ from methods.baseline_new_joint import BASELINE_JOINT
 from methods.remind_new import REMIND
 from methods.twf_new import TWF
 from methods.ocs import OCS
+from methods.er_classifier import ER_CLASSIFIER
+from methods.pretraining import Pretraining
 
 logger = logging.getLogger()
 
@@ -37,6 +39,13 @@ def select_method(args, train_datalist, test_datalist, device):
     print("!!", args.mode == "er")
     if args.mode == "er":
         method = ER(
+            train_datalist=train_datalist,
+            test_datalist=test_datalist,
+            device=device,
+            **kwargs,
+        )
+    elif args.mode == "er_classifier":
+        method = ER_CLASSIFIER(
             train_datalist=train_datalist,
             test_datalist=test_datalist,
             device=device,
@@ -254,6 +263,13 @@ def select_method(args, train_datalist, test_datalist, device):
         
     elif args.mode == "ours":
         method = Ours(
+            train_datalist=train_datalist,
+            test_datalist=test_datalist,
+            device=device,
+            **kwargs,
+        )
+    elif args.mode == "pretraining":
+        method = Pretraining(
             train_datalist=train_datalist,
             test_datalist=test_datalist,
             device=device,

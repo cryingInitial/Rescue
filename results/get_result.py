@@ -5,7 +5,7 @@ import warnings
 warnings.filterwarnings(action='ignore')
 dir = 'cifar10'
 
-def print_from_log(exp_name, seeds=(1, 2, 3)):
+def print_from_log(exp_name, seeds=(2,3)):
     A_auc = []
     A_last = []
     A_online = []

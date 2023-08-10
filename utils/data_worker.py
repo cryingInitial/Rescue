@@ -8,6 +8,10 @@ import PIL
 import numpy as np
 from utils.augment import DataAugmentation, Preprocess, get_statistics
 
+from PIL import ImageFilter
+from torchvision import transforms
+import kornia.augmentation as K
+
 IS_WINDOWS = sys.platform == "win32"
 TIMEOUT = 5.0
 
@@ -66,6 +70,7 @@ def load_data(sample, data_dir, transform=None):
         image = transform(image)
     return image
 
+    
 @torch.no_grad()
 def worker_loop(index_queue, data_queue, data_dir, transform, transform_on_gpu=False, cpu_transform=None, device='cpu', use_kornia=False, transform_on_worker=True, test_transform=None):
     watchdog = ManagerWatchdog()
@@ -80,57 +85,99 @@ def worker_loop(index_queue, data_queue, data_dir, transform, transform_on_gpu=F
             mean, std, n_classes, inp_size, _ = get_statistics(dataset='imagenet')
         preprocess = Preprocess(inp_size)
         kornia_randaug = DataAugmentation(inp_size, mean, std)
+    
+    
+    if 'cifar100' in data_dir:
+        mean, std, n_classes, inp_size, _ = get_statistics(dataset='cifar100')
+    elif 'cifar10' in data_dir:
+        mean, std, n_classes, inp_size, _ = get_statistics(dataset='cifar10')
+    elif 'tinyimagenet' in data_dir:
+        mean, std, n_classes, inp_size, _ = get_statistics(dataset='tinyimagenet')
+    elif 'imagenet' in data_dir:
+        mean, std, n_classes, inp_size, _ = get_statistics(dataset='imagenet')
+        
+    cpu_transform = transforms.Compose([
+        transforms.RandAugment(),
+        transforms.RandomApply([GaussianBlur([0.1, 2.0])], p=0.5),
+        transforms.ToTensor(),
+    ])
+
+    def kornia_transform(images):
+        images = K.RandomResizedCrop((inp_size, inp_size), scale=(0.2, 1.0))(images)
+        images = K.RandomGrayscale(p=0.2)(images)
+        images = K.RandomHorizontalFlip()(images)
+        return images
+    
+    gpu_transform = transforms.Compose([
+        transforms.ConvertImageDtype(torch.float32),
+        transforms.Normalize(mean, std),
+    ])
+    
     while watchdog.is_alive():
         try:
             r = index_queue.get(timeout=TIMEOUT)
         except queue.Empty:
             continue
         
-        try:
-            data = dict()
-            images = []
-            labels = []
-            indexs = []
-            test_images = []
-            
-            # twc
-            task_ids = []
-            if len(r) > 0:
-                for sample in r:
-                    if use_kornia:
-                        img_name = sample["file_name"]
-                        img_path = os.path.join(data_dir, img_name)
-                        image = PIL.Image.open(img_path).convert("RGB")
-                        images.append(preprocess(image))
-                    elif transform_on_gpu:
-                        images.append(load_data(sample, data_dir, cpu_transform))
-                    else:
-                        images.append(load_data(sample, data_dir, transform))
-                        if test_transform is not None:
-                            test_images.append(load_data(sample, data_dir, test_transform))
-                    labels.append(sample["label"])
-                    indexs.append(sample["sample_num"])
-                    if 'task_id' in sample:
-                        task_ids.append(sample["task_id"])
-                        
-                if transform_on_worker:
-                    if use_kornia:
-                        images = kornia_randaug(torch.stack(images).to(device))
-                    elif transform_on_gpu:
-                        if test_transform is not None:
-                            test_images = test_transform(torch.stack(images).float().to(device))
-                        images = transform(torch.stack(images).to(device))
-                    else:
-                        images = torch.stack(images)
-                        if test_transform is not None:
-                            test_images = torch.stack(test_images)
-                data['image'] = images
-                data['test_image'] = test_images
-                data['label'] = torch.LongTensor(labels)
-                data['sample_num'] = torch.LongTensor(indexs)
-                if len(task_ids) > 0:
-                    data['task_id'] = torch.LongTensor(task_ids)
-                data_queue.put(data)
-            else:
-                data_queue.put(None)
-        except: print('Error in worker loop')
+        data = dict()
+        images = []
+        labels = []
+        indexs = []
+        test_images = []
+        
+        # twc
+        task_ids = []
+        if len(r) > 0:
+            for sample in r:
+                if use_kornia:
+                    img_name = sample["file_name"]
+                    img_path = os.path.join(data_dir, img_name)
+                    image = PIL.Image.open(img_path).convert("RGB")
+                    images.append(preprocess(image))
+                elif transform_on_gpu:
+                    images.append(load_data(sample, data_dir, cpu_transform))
+                else:
+                    images.append(load_data(sample, data_dir, transform))
+                    if test_transform is not None:
+                        test_images.append(load_data(sample, data_dir, test_transform))
+                labels.append(sample["label"])
+                indexs.append(sample["sample_num"])
+                if 'task_id' in sample:
+                    task_ids.append(sample["task_id"])
+                    
+            if transform_on_worker:
+                if use_kornia:
+                    images = kornia_randaug(torch.stack(images).to(device))
+                elif transform_on_gpu:
+                    if test_transform is not None:
+                        test_images = test_transform(torch.stack(images).float().to(device))
+                    # images = transform(torch.stack(images).to(device))
+                    images = torch.stack(images).to(device)
+                    images = kornia_transform(images)
+                    images = gpu_transform(images)
+                else:
+                    images = torch.stack(images)
+                    if test_transform is not None:
+                        test_images = torch.stack(test_images)
+            data['image'] = images
+            data['test_image'] = test_images
+            data['label'] = torch.LongTensor(labels)
+            data['sample_num'] = torch.LongTensor(indexs)
+            if len(task_ids) > 0:
+                data['task_id'] = torch.LongTensor(task_ids)
+            data_queue.put(data)
+        else:
+            data_queue.put(None)
+
+
+
+class GaussianBlur(object):
+    """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
+
+    def __init__(self, sigma=[0.1, 2.0]):
+        self.sigma = sigma
+
+    def __call__(self, x):
+        sigma = random.uniform(self.sigma[0], self.sigma[1])
+        x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
+        return x
